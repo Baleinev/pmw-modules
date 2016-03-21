@@ -12,16 +12,14 @@ CFLAGS=     -Isrc -I. -Isrc/modules/ -I.. -I../../lib -I/opt/vc/include -I/opt/v
 	    
 LDFLAGS=    -L/opt/vc/src/hello_pi/libs/ilclient -L/opt/vc/lib
 	    
-LDLIBS= -lpthread -lopenmaxil -lbcm_host -lvcos -lvchiq_arm -lilclient -lavformat -lavcodec -lavutil
-#LDLIBS=-ldvbcfg -lucsi -ldvbsec -ldvbapi -lpthread -lmpg123 -lasound
-
+LDLIBS= -lpthread -lopenmaxil -lbcm_host -lvcos -lvchiq_arm -lilclient -lavformat -lavfilter -lavcodec -lavutil
 
 vidplayer.o: vidplayer.c
-	$(CC) $(CFLAGS) -c src/vidplayer.c
+	$(CC) $(CFLAGS) -c vidplayer.c
 
 clean:
 	rm -f *.o
-	rm -f raberrytv
+	rm -f vidplayer
 
 all: $(OBJECTS)
 	$(CC) $(CFLAGS) -o vidplayer $(OBJECTS) $(LDFLAGS) $(LDLIBS)
