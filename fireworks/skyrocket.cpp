@@ -25,8 +25,8 @@
 #include <stdio.h>
 #include <pthread.h>
 
-#include "GLES/gl.h"
-#include "GLES/glext.h"
+#include <GLES/gl.h>
+#include <GLES/glext.h>
 
 // #include <GL/glu.h>
 

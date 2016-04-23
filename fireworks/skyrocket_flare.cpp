@@ -18,7 +18,7 @@
 
 #include "stdio.h"
 
-#include "GLES/gl.h"
+#include <GLES/gl.h>
 
 #include "skyrocket_flare.h"
 

@@ -9,6 +9,7 @@ HELLOPIDIR=$(STAGING_DIR)/usr/src/hello_pi/
 LIBDIR=$(TARGET_DIR)/usr/lib/
 
 CC=gcc
+CXX=g++
 CFLAGS= -I . \
 		-I $(INCDIR)interface/vcos \
 		-I $(INCDIR)interface/vcos/pthreads \

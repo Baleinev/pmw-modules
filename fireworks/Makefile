@@ -1,12 +1,17 @@
-BIN=skyrocket.bin
+BIN=fireworks
+
+LIBDIR=$(TARGET_DIR)/usr/lib/
 
 OBJS=rsMath/rsTrigonometry.c rsMath/rsMatrix.cpp rsMath/rsQuat.cpp rsMath/rsVec.cpp mire.o cJSON.o rsMath.o skyrocket.o skyrocket_flare.o skyrocket_particle.o skyrocket_smoke.o skyrocket_shockwave.o skyrocket_textures.o  driver.o 
 
 CFLAGS=-DSTANDALONE -D__STDC_CONSTANT_MACROS -D__STDC_LIMIT_MACROS -DTARGET_POSIX -D_LINUX -fPIC -DPIC -D_REENTRANT -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -U_FORTIFY_SOURCE -Wall -g -DHAVE_LIBOPENMAX=2 -DOMX -DOMX_SKIP64BIT -ftree-vectorize -pipe -DUSE_EXTERNAL_OMX -DHAVE_LIBBCM_HOST -DUSE_EXTERNAL_LIBBCM_HOST -DUSE_VCHIQ_ARM -Wno-psabi
 
-LDFLAGS=-L$(LIBDIR)  -lGLESv2 -lEGL  -lvchostif -lbcm_host -lvcos -lvchiq_arm -lpthread -lrt -lm 
+LDFLAGS=-L$(LIBDIR) -lvchostif -lbcm_host -lvcos -lvchiq_arm -lGLESv2 -lEGL -lbz2  -lpthread -lrt -lm 
+
+INCDIR=$(STAGING_DIR)/usr/include/
 
 INCLUDES= -I . \
+		-I $(INCDIR) \
 		-I $(INCDIR)interface/vcos \
 		-I $(INCDIR)interface/vcos/pthreads \
 		-I $(INCDIR)interface/vmcs_host/khronos/IL \
