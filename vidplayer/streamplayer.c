@@ -28,7 +28,8 @@ int sock,buflen
 unsigned sinlen;
 struct sockaddr_in sock_in;
 
-void printState(OMX_HANDLETYPE handle) {
+void printState(OMX_HANDLETYPE handle) 
+{
     OMX_STATETYPE state;
     OMX_ERRORTYPE err;
 
@@ -123,33 +124,33 @@ OMX_TICKS ToOMXTime(int64_t pts)
 #define FromOMXTime(x) (x)
 #endif
 
-OMX_ERRORTYPE copy_into_buffer_and_empty(AVPacket *pkt, COMPONENT_T *component, OMX_BUFFERHEADERTYPE *buff_header) {
+OMX_ERRORTYPE copy_into_buffer_and_empty(/*AVPacket *pkt,*/ COMPONENT_T *component, OMX_BUFFERHEADERTYPE *buff_header) {
 
     OMX_ERRORTYPE r;
 
-    status = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
+ //    status = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
 
-    int buff_size = buff_header->nAllocLen;
-    int size = status;
+ //    int buff_size = buff_header->nAllocLen;
+ //    int size = status;
 
-    if (size < buff_size) {
-	memcpy((unsigned char *)buff_header->pBuffer, 
-	       buffer, size);
-    } else {
-	printf("Buffer not big enough %d %d\n", buff_size, size);
-	return -1;
-    }
+ //    if (size < buff_size) {
+	// memcpy((unsigned char *)buff_header->pBuffer, 
+	//        buffer, size);
+ //    } else {
+	// printf("Buffer not big enough %d %d\n", buff_size, size);
+	// return -1;
+ //    }
 	
-    buff_header->nFilledLen = size;
-    buff_header->nFlags = 0;
-    buff_header->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
-    if (pkt->dts == 0) {
-	buff_header->nFlags |= OMX_BUFFERFLAG_STARTTIME;
-    } else {
-	printf("DTS is %s %ld\n", "str", pkt->dts);
-	//buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
-	buff_header->nTimeStamp = ToOMXTime((uint64_t)(pkt->dts));
-    }
+ //    buff_header->nFilledLen = size;
+ //    buff_header->nFlags = 0;
+ //    buff_header->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
+ //    if (pkt->dts == 0) {
+	// buff_header->nFlags |= OMX_BUFFERFLAG_STARTTIME;
+ //    } else {
+	// printf("DTS is %s %ld\n", "str", pkt->dts);
+	// //buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
+	// buff_header->nTimeStamp = ToOMXTime((uint64_t)(pkt->dts));
+ //    }
 
     r = OMX_EmptyThisBuffer(ilclient_get_handle(component),
 			    buff_header);
@@ -163,6 +164,9 @@ OMX_ERRORTYPE copy_into_buffer_and_empty(AVPacket *pkt, COMPONENT_T *component, 
 }
 
 int img_width, img_height;
+
+uint8_t extradatasize;
+void *extradata;
 
 int SendDecoderConfig(COMPONENT_T *component)
 {
@@ -328,7 +332,7 @@ void setup_renderComponent(ILCLIENT_T  *handle, char *renderComponentName, COMPO
     printState(ilclient_get_handle(*renderComponent));
 }
 
-voi setup_receiveSocket(unsigned int port)
+void setup_receiveSocket(unsigned int port)
 {
   int status;
   int yes = 1;
@@ -360,6 +364,9 @@ voi setup_receiveSocket(unsigned int port)
 }
 
 int main(int argc, char** argv) {
+
+	/* Setup listening socket on given port */
+	setup_receiveSocket(atoi(args[1]));
 
     char *decodeComponentName;
     char *renderComponentName;
@@ -426,7 +433,12 @@ int main(int argc, char** argv) {
 	exit(1);
     }
     printState(ilclient_get_handle(decodeComponent));
+
+    /* Wait for first packet, containing extradata */
+   	extradatasize = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
+   	extradata = (void *)buffer;
  
+ 	/* Configure stream */
     SendDecoderConfig(decodeComponent);
 
 
@@ -518,9 +530,13 @@ int main(int argc, char** argv) {
 	exit(1);
     }
 
-    // now work through the file
-    while (av_read_frame(pFormatCtx, &pkt) >= 0) 
+    while (1) //av_read_frame(pFormatCtx, &pkt) >= 0) 
     {
+    	/* Get avpacket */
+    	status = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
+
+    	AVPacket *pkt = (AVPacket *)buffer;
+
 		printf("Read pkt\n");
 	
 		if (pkt.stream_index != video_stream_idx) {
@@ -529,6 +545,38 @@ int main(int argc, char** argv) {
 
 		// do we have a decode input buffer we can fill and empty?
 		buff_header =  ilclient_get_input_buffer(decodeComponent,130,1 /* block */);
+
+
+// OMX_ERRORTYPE copy_into_buffer_and_empty(AVPacket *pkt, COMPONENT_T *component, OMX_BUFFERHEADERTYPE *buff_header) {
+
+//     OMX_ERRORTYPE r;
+
+
+
+
+
+    int buff_size = buff_header->nAllocLen;
+    int size = status;
+
+    if (size < buff_size) {
+	memcpy((unsigned char *)buff_header->pBuffer, 
+	       pkt->data, pkt->size);
+    } else {
+	printf("Buffer not big enough %d %d\n", buff_size, size);
+	// return -1;
+    }
+	
+    buff_header->nFilledLen = size;
+    buff_header->nFlags = 0;
+    buff_header->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
+    if (pkt->dts == 0) {
+	buff_header->nFlags |= OMX_BUFFERFLAG_STARTTIME;
+    } else {
+	printf("DTS is %s %ld\n", "str", pkt->dts);
+	//buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
+	buff_header->nTimeStamp = ToOMXTime((uint64_t)(pkt->dts));
+    }
+
 
 		if (buff_header != NULL) {copy_into_buffer_and_empty(&pkt,
 					       decodeComponent,

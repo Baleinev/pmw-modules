@@ -36,10 +36,8 @@ static int video_stream_idx = -1;
 
 int sock;
 int sinlen;
-  struct sockaddr_in sock_in;
-  int yes = 1;
-
-
+struct sockaddr_in sock_in;
+int yes = 1;
 
 unsigned long getMicroTime()
 {

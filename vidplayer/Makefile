@@ -1,7 +1,7 @@
 #
 # Makefile to build raberrytv with OpenMAX both for audio and video output
 # 
-OBJECTS= vidplayer.o
+OBJECTS= vidplayer.o streamplayer.o
 
 INCDIR=$(STAGING_DIR)/usr/include/
 HELLOPIDIR=$(STAGING_DIR)/usr/src/hello_pi/
@@ -28,9 +28,15 @@ LDLIBS= -lpthread -lopenmaxil -lbcm_host -lvcos -lvchiq_arm -lilclient -lavforma
 vidplayer.o: vidplayer.c
 	$(CC) $(CFLAGS) -c vidplayer.c
 
+streamplayer.o: streamplayer.c
+	$(CC) $(CFLAGS) -c streamplayer.c	
+
 clean:
 	rm -f *.o
 	rm -f vidplayer
+	rm -f streamplayer
 
-all: $(OBJECTS)
-	$(CC) $(CFLAGS) -o vidplayer $(OBJECTS) $(LDFLAGS) $(LDLIBS)
+all: streamplayer.o vidplayer.o
+	$(CC) $(CFLAGS) -o vidplayer vidplayer.o $(LDFLAGS) $(LDLIBS)
+	$(CC) $(CFLAGS) -o streamplayer streamplayer.o $(LDFLAGS) $(LDLIBS)
+
