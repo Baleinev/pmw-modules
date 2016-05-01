@@ -38,6 +38,8 @@ int sock;
 int sinlen;
 struct sockaddr_in sock_in;
 int yes = 1;
+char *broadcastIP;                /* IP broadcast address */
+
 
 unsigned long getMicroTime()
 {
@@ -57,12 +59,12 @@ void sigalrm_handler(int signum)
 
     if(av_read_frame(pFormatCtx, &pkt) >= 0)
     {
-        printf("Read pkt %d\n", pkt.size);
+        printf("[sigalrm_handler] Read pkt %d\n", pkt.size);
 
         AVPacket orig_pkt = pkt;
 
         int status = sendto(sock, pkt.data, pkt.size, 0, (struct sockaddr *)&sock_in, sinlen);
-        printf("sendto Status = %d\n", status);        
+        printf("[sigalrm_handler] sendto Status = %d\n", status);        
 
         av_free_packet(&orig_pkt);
     }
@@ -76,28 +78,26 @@ int setup_broadcastSocket(unsigned int port)
   sinlen = sizeof(struct sockaddr_in);
   memset(&sock_in, 0, sinlen);
 
-  sock = socket (PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
-  sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
-  sock_in.sin_port = htons(port);
-  sock_in.sin_family = PF_INET;
+  // sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
+  // sock_in.sin_port = htons(0);
+  // sock_in.sin_family = PF_INET;
 
-  status = bind(sock, (struct sockaddr *)&sock_in, sinlen);
-  printf("Bind Status = %d\n", status);
+  // status = bind(sock, (struct sockaddr *)&sock_in, sinlen);
+  // printf("[setup_broadcastSocket] Bind Status %d\n", status);
 
   status = setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(int) );
-  printf("Setsockopt Status = %d\n", status);
+  printf("[setup_broadcastSocket] Setsockopt Status %d\n", status);
 
   /* -1 = 255.255.255.255 this is a BROADCAST address,
      a local broadcast address could also be used.
      you can comput the local broadcat using NIC address and its NETMASK 
   */ 
 
-  sock_in.sin_addr.s_addr=htonl(-1); /* send message to 255.255.255.255 */
+  sock_in.sin_addr.s_addr =  inet_addr(broadcastIP); /* send message to 255.255.255.255 */
   sock_in.sin_port = htons(port); /* port number */
-  sock_in.sin_family = PF_INET;
-
-
+  sock_in.sin_family = AF_INET;
 
   // shutdown(sock, 2);
   // close(sock);
@@ -165,7 +165,9 @@ int main(int argc,const char * args[])
 
    setup_demuxer(args[1]);
 
-   setup_broadcastSocket(atoi(args[2]));
+    broadcastIP = args[2];            /* First arg:  broadcast IP address */    
+
+   setup_broadcastSocket(atoi(args[3]));
 
   fflush(0);
 
