@@ -1,5 +1,5 @@
-BIN=raspi2png
-OBJS=raspi2png.o cJSON.o
+BIN=screenshot
+OBJS=screenshot.o cJSON.o
 
 INCDIR=$(STAGING_DIR)/usr/include/
 LIBDIR=$(TARGET_DIR)/usr/lib/
