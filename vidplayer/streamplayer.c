@@ -1,19 +1,33 @@
+/*
+Copyright (c) 2012, Broadcom Europe Ltd
+All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the copyright holder nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+// Video deocode demo using OpenMAX IL though the ilcient helper library
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-
-#include <interface/vmcs_host/khronos/IL/OMX_Core.h>
-#include <interface/vmcs_host/khronos/IL/OMX_Component.h>
-
-#include <libavformat/avformat.h>
-
-#include <bcm_host.h>
-#include <vcos_logging.h>
-
-#define VCOS_LOG_CATEGORY (&il_ffmpeg_log_category)
-static VCOS_LOG_CAT_T il_ffmpeg_log_category;
-
-#include <ilclient.h>
+#include <string.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -21,575 +35,301 @@ static VCOS_LOG_CAT_T il_ffmpeg_log_category;
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#include "bcm_host.h"
+#include "ilclient.h"
 
-#define INBUF_SIZE 4096
-#define AUDIO_INBUF_SIZE 20480
-#define AUDIO_REFILL_THRESH 4096
+#define IFRAME_BUFFER_LENGTH (1024*1024)
 
-#define MAXBUF 65536
-
-char buffer[MAXBUF];
-int sock,buflen;
-unsigned sinlen;
-struct sockaddr_in sock_in;
-
-void printState(OMX_HANDLETYPE handle) 
+static int open_listening_socket(unsigned int udp_port)
 {
-    OMX_STATETYPE state;
-    OMX_ERRORTYPE err;
+	int sock;
 
-    err = OMX_GetState(handle, &state);
-    if (err != OMX_ErrorNone) {
-        fprintf(stderr, "Error on getting state\n");
-        exit(1);
-    }
-    switch (state) {
-    case OMX_StateLoaded:           printf("[printState] StateLoaded\n"); break;
-    case OMX_StateIdle:             printf("[printState] StateIdle\n"); break;
-    case OMX_StateExecuting:        printf("[printState] StateExecuting\n"); break;
-    case OMX_StatePause:            printf("[printState] StatePause\n"); break;
-    case OMX_StateWaitForResources: printf("[printState] StateWait\n"); break;
-    case OMX_StateInvalid:          printf("[printState] StateInvalid\n"); break;
-    default:                        printf("[printState] State unknown\n"); break;
-    }
-}
+	struct sockaddr_in sock_in;
 
-char *err2str(int err) {
-    switch (err) {
-    case OMX_ErrorInsufficientResources: return "OMX_ErrorInsufficientResources";
-    case OMX_ErrorUndefined: return "OMX_ErrorUndefined";
-    case OMX_ErrorInvalidComponentName: return "OMX_ErrorInvalidComponentName";
-    case OMX_ErrorComponentNotFound: return "OMX_ErrorComponentNotFound";
-    case OMX_ErrorInvalidComponent: return "OMX_ErrorInvalidComponent";
-    case OMX_ErrorBadParameter: return "OMX_ErrorBadParameter";
-    case OMX_ErrorNotImplemented: return "OMX_ErrorNotImplemented";
-    case OMX_ErrorUnderflow: return "OMX_ErrorUnderflow";
-    case OMX_ErrorOverflow: return "OMX_ErrorOverflow";
-    case OMX_ErrorHardware: return "OMX_ErrorHardware";
-    case OMX_ErrorInvalidState: return "OMX_ErrorInvalidState";
-    case OMX_ErrorStreamCorrupt: return "OMX_ErrorStreamCorrupt";
-    case OMX_ErrorPortsNotCompatible: return "OMX_ErrorPortsNotCompatible";
-    case OMX_ErrorResourcesLost: return "OMX_ErrorResourcesLost";
-    case OMX_ErrorNoMore: return "OMX_ErrorNoMore";
-    case OMX_ErrorVersionMismatch: return "OMX_ErrorVersionMismatch";
-    case OMX_ErrorNotReady: return "OMX_ErrorNotReady";
-    case OMX_ErrorTimeout: return "OMX_ErrorTimeout";
-    case OMX_ErrorSameState: return "OMX_ErrorSameState";
-    case OMX_ErrorResourcesPreempted: return "OMX_ErrorResourcesPreempted";
-    case OMX_ErrorPortUnresponsiveDuringAllocation: return "OMX_ErrorPortUnresponsiveDuringAllocation";
-    case OMX_ErrorPortUnresponsiveDuringDeallocation: return "OMX_ErrorPortUnresponsiveDuringDeallocation";
-    case OMX_ErrorPortUnresponsiveDuringStop: return "OMX_ErrorPortUnresponsiveDuringStop";
-    case OMX_ErrorIncorrectStateTransition: return "OMX_ErrorIncorrectStateTransition";
-    case OMX_ErrorIncorrectStateOperation: return "OMX_ErrorIncorrectStateOperation";
-    case OMX_ErrorUnsupportedSetting: return "OMX_ErrorUnsupportedSetting";
-    case OMX_ErrorUnsupportedIndex: return "OMX_ErrorUnsupportedIndex";
-    case OMX_ErrorBadPortIndex: return "OMX_ErrorBadPortIndex";
-    case OMX_ErrorPortUnpopulated: return "OMX_ErrorPortUnpopulated";
-    case OMX_ErrorComponentSuspended: return "OMX_ErrorComponentSuspended";
-    case OMX_ErrorDynamicResourcesUnavailable: return "OMX_ErrorDynamicResourcesUnavailable";
-    case OMX_ErrorMbErrorsInFrame: return "OMX_ErrorMbErrorsInFrame";
-    case OMX_ErrorFormatNotDetected: return "OMX_ErrorFormatNotDetected";
-    case OMX_ErrorContentPipeOpenFailed: return "OMX_ErrorContentPipeOpenFailed";
-    case OMX_ErrorContentPipeCreationFailed: return "OMX_ErrorContentPipeCreationFailed";
-    case OMX_ErrorSeperateTablesUsed: return "OMX_ErrorSeperateTablesUsed";
-    case OMX_ErrorTunnelingUnsupported: return "OMX_ErrorTunnelingUnsupported";
-    default: return "unknown error";
-    }
-}
-
-void eos_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
-    printf("Got eos event\n");
-}
-
-void error_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
-    printf("OMX error %s\n", err2str(data));
-}
-
-void port_settings_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data) {
-    printf("Got port Settings event\n");
-    // exit(0);
-}
-
-void empty_buffer_done_callback(void *userdata, COMPONENT_T *comp) {
-    printf("Got empty buffer done\n");
-}
-
-unsigned int uWidth;
-unsigned int uHeight;
-
-#ifdef OMX_SKIP64BIT
-OMX_TICKS ToOMXTime(int64_t pts)
-{
-  OMX_TICKS ticks;
-  ticks.nLowPart = pts;
-  ticks.nHighPart = pts >> 32;
-  return ticks;
-}
-#else
-#define FromOMXTime(x) (x)
-#endif
-
-OMX_ERRORTYPE copy_into_buffer_and_empty(/*AVPacket *pkt,*/ COMPONENT_T *component, OMX_BUFFERHEADERTYPE *buff_header) {
-
-    OMX_ERRORTYPE r;
-
- //    status = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
-
- //    int buff_size = buff_header->nAllocLen;
- //    int size = status;
-
- //    if (size < buff_size) {
-	// memcpy((unsigned char *)buff_header->pBuffer, 
-	//        buffer, size);
- //    } else {
-	// printf("Buffer not big enough %d %d\n", buff_size, size);
-	// return -1;
- //    }
-	
- //    buff_header->nFilledLen = size;
- //    buff_header->nFlags = 0;
- //    buff_header->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
- //    if (pkt->dts == 0) {
-	// buff_header->nFlags |= OMX_BUFFERFLAG_STARTTIME;
- //    } else {
-	// printf("DTS is %s %ld\n", "str", pkt->dts);
-	// //buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
-	// buff_header->nTimeStamp = ToOMXTime((uint64_t)(pkt->dts));
- //    }
-
-    r = OMX_EmptyThisBuffer(ilclient_get_handle(component),
-			    buff_header);
-    if (r != OMX_ErrorNone) {
-	fprintf(stderr, "Empty buffer error %s\n",
-		err2str(r));
-    } else {
-	printf("Emptying buffer %p\n", buff_header);
-    }
-    return r;
-}
-
-int img_width, img_height;
-
-uint8_t extradatasize;
-void *extradata;
-
-int SendDecoderConfig(COMPONENT_T *component)
-{
-  OMX_ERRORTYPE omx_err   = OMX_ErrorNone;
-
-  /* send decoder config */
-  if(extradatasize > 0 && extradata != NULL)
-  {
-      //fwrite(extradata, 1, extradatasize, out);
-
-      OMX_BUFFERHEADERTYPE *omx_buffer = ilclient_get_input_buffer(component,
-					  130,
-					  1 /* block */);
-
-    if(omx_buffer == NULL)
-    {
-	fprintf(stderr, "%s - buffer error 0x%08x", __func__, omx_err);
-      return 0;
-    }
-
-    omx_buffer->nOffset = 0;
-    omx_buffer->nFilledLen = extradatasize;
-    if(omx_buffer->nFilledLen > omx_buffer->nAllocLen)
-    {
-	fprintf(stderr, "%s - omx_buffer->nFilledLen > omx_buffer->nAllocLen",  __func__);
-      return 0;
-    }
-
-    memset((unsigned char *)omx_buffer->pBuffer, 0x0, omx_buffer->nAllocLen);
-    memcpy((unsigned char *)omx_buffer->pBuffer, extradata, omx_buffer->nFilledLen);
-    omx_buffer->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_ENDOFFRAME;
-  
-    omx_err =  OMX_EmptyThisBuffer(ilclient_get_handle(component),
-				   omx_buffer);
-    if (omx_err != OMX_ErrorNone)
-    {
-	fprintf(stderr, "%s - OMX_EmptyThisBuffer() failed with result(0x%x)\n", __func__, omx_err);
-      return 0;
-    } else {
-	printf("Config sent, emptying buffer %d\n", extradatasize);
-    }
-  }
-  return 1;
-}
-
-OMX_ERRORTYPE set_video_decoder_input_format(COMPONENT_T *component)
-{
-    int err;
-
-    // set input video format
-    printf("[set_video_decoder_input_format] Setting video decoder format\n");
-    OMX_VIDEO_PARAM_PORTFORMATTYPE videoPortFormat;
-
-    memset(&videoPortFormat, 0, sizeof(OMX_VIDEO_PARAM_PORTFORMATTYPE));
-    videoPortFormat.nSize = sizeof(OMX_VIDEO_PARAM_PORTFORMATTYPE);
-    videoPortFormat.nVersion.nVersion = OMX_VERSION;
-    videoPortFormat.nPortIndex = 130;
-
-    err = OMX_GetParameter(ilclient_get_handle(component),
-			   OMX_IndexParamVideoPortFormat, &videoPortFormat);
-    if (err != OMX_ErrorNone) {
-        fprintf(stderr, "[set_video_decoder_input_format][ERROR] Error getting video decoder format %s\n", err2str(err));
-        return err;
-    }
-
-    videoPortFormat.nPortIndex = 130;
-    videoPortFormat.nIndex = 0;
-    videoPortFormat.eCompressionFormat = OMX_VIDEO_CodingAVC;
-    videoPortFormat.eColorFormat = OMX_COLOR_FormatUnused;
-    videoPortFormat.xFramerate = 0;
-
-    err = OMX_SetParameter(ilclient_get_handle(component),
-			   OMX_IndexParamVideoPortFormat, &videoPortFormat);
-    if (err != OMX_ErrorNone) {
-        fprintf(stderr, "[set_video_decoder_input_format][ERROR] Error setting video decoder format %s\n", err2str(err));
-        return err;
-    } else {
-        printf("[set_video_decoder_input_format] Video decoder format set up ok\n");
-    }
-
-  OMX_PARAM_PORTDEFINITIONTYPE portParam;
-  memset(&portParam, 0, sizeof( OMX_PARAM_PORTDEFINITIONTYPE));
-    portParam.nSize = sizeof( OMX_PARAM_PORTDEFINITIONTYPE);
-    portParam.nVersion.nVersion = OMX_VERSION;
-
-  portParam.nPortIndex = 130;
-
-  err =  OMX_GetParameter(ilclient_get_handle(component),
-			  OMX_IndexParamPortDefinition, &portParam);
-  if(err != OMX_ErrorNone)
-  {
-      fprintf(stderr, "[set_video_decoder_input_format] COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
-    return err;
-  }
-
-  portParam.nPortIndex = 130;
-
-  portParam.format.video.nFrameWidth  = img_width;
-  portParam.format.video.nFrameHeight = img_height;
-
-  err =  OMX_SetParameter(ilclient_get_handle(component),
-			  OMX_IndexParamPortDefinition, &portParam);
-  if(err != OMX_ErrorNone)
-  {
-      fprintf(stderr, "[set_video_decoder_input_format] COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
-    return err;
-  }
-
-  return OMX_ErrorNone;
-}
-
-void setup_decodeComponent(ILCLIENT_T  *handle, char *decodeComponentName, COMPONENT_T **decodeComponent) 
-{
-  int err;
-
-  err = ilclient_create_component(
-    handle,
-    decodeComponent,
-    decodeComponentName,
-    ILCLIENT_DISABLE_ALL_PORTS|ILCLIENT_ENABLE_INPUT_BUFFERS|ILCLIENT_ENABLE_OUTPUT_BUFFERS
-  );
-
-  if (err == -1) {
-    fprintf(stderr, "[setup_decodeComponent][ERROR] DecodeComponent create failed\n");
-    exit(1);
-  }
-  printState(ilclient_get_handle(*decodeComponent));
-
-  err = ilclient_change_component_state(*decodeComponent,OMX_StateIdle);
-
-  if (err < 0) {
-    fprintf(stderr, "[setup_decodeComponent][ERROR] Couldn't change state to Idle\n");
-    exit(1);
-  }
-  printState(ilclient_get_handle(*decodeComponent));
-
-  /* Must be before we enable buffers */
-  set_video_decoder_input_format(*decodeComponent);
-}
-
-void setup_renderComponent(ILCLIENT_T  *handle, char *renderComponentName, COMPONENT_T **renderComponent)
-{
-  int err;
-
-  err = ilclient_create_component(
-    handle,
-    renderComponent,
-    renderComponentName,
-    ILCLIENT_DISABLE_ALL_PORTS|ILCLIENT_ENABLE_INPUT_BUFFERS
-  );
-
-  if (err == -1) {
-    fprintf(stderr, "[setup_renderComponent][ERROR] RenderComponent create failed\n");
-    exit(1);
-  }
-  printState(ilclient_get_handle(*renderComponent));
-
-  err = ilclient_change_component_state(*renderComponent,OMX_StateIdle);
-
-  if (err < 0) {
-    fprintf(stderr, "[setup_renderComponent][ERROR] Couldn't change state to Idle\n");
-    exit(1);
-  }
-  printState(ilclient_get_handle(*renderComponent));
-}
-
-void setup_receiveSocket(unsigned int port)
-{
-  int status;
-
-  memset(buffer, 0, MAXBUF);  
-
-  sinlen = sizeof(struct sockaddr_in);
+  int sinlen = sizeof(struct sockaddr_in);
 
   memset(&sock_in, 0, sinlen);
 
-  sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  printf("[setup_receiveSocket] Sock Status %d\n", sock);
 
   sock_in.sin_family = AF_INET;
-  sock_in.sin_port = htons(port);
-  sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
+  sock_in.sin_port = htons(udp_port);
+  sock_in.sin_addr.s_addr =  htonl(INADDR_ANY);
 
-  status = bind(sock, (struct sockaddr *)&sock_in, sinlen);
-  printf("[setup_receiveSocket] Bind Status %d\n", status);
+  int status = bind(sock, (struct sockaddr *)&sock_in, sinlen);
+  printf("[setup_receiveSocket] Bind Status %d, errno: %d\n", status, errno);
 
-  status = getsockname(sock, (struct sockaddr *)&sock_in, &sinlen);
-  printf("[setup_receiveSocket] Sock port %d\n",htons(sock_in.sin_port));
 
-  buflen = MAXBUF;
-  // printf("[setup_receiveSocket] sendto Status = %d\n", status);
+	struct timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 3000;
 
-  // shutdown(sock, 2);
-  // close(sock);
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv));
+
+
+  if(status < 0)
+  	return status;
+  else
+  	return sock;
+}
+ 
+
+static int video_decode_test(unsigned int udp_port)
+{
+   OMX_VIDEO_PARAM_PORTFORMATTYPE format;
+   OMX_TIME_CONFIG_CLOCKSTATETYPE cstate;
+   COMPONENT_T *video_decode = NULL, *video_scheduler = NULL, *video_render = NULL, *clock = NULL;
+   COMPONENT_T *list[5];
+   TUNNEL_T tunnel[4];
+   ILCLIENT_T *client;
+   int status = 0;
+   unsigned int data_len = 0;
+   unsigned int already_read =0;
+   unsigned int buflen = 0;
+   unsigned int bufptr = 0;
+
+   char iframeBuffer[IFRAME_BUFFER_LENGTH];
+
+	int sock;
+	struct sockaddr_in recv_sock;
+    socklen_t receiveSockaddrLen = sizeof(recv_sock);  
+
+   FILE *in;
+
+   memset(list, 0, sizeof(list));
+   memset(tunnel, 0, sizeof(tunnel));
+
+   if((sock = open_listening_socket(udp_port)) < 0)
+      return -2;
+
+   // if((in = fopen("test.h264", "rb")) == NULL)
+   //    return -2;  
+
+   if((client = ilclient_init()) == NULL)
+   {
+      close(sock);
+      return -3;
+   }
+
+   if(OMX_Init() != OMX_ErrorNone)
+   {
+      ilclient_destroy(client);
+      close(sock);
+      return -4;
+   }
+
+   // create video_decode
+   if(ilclient_create_component(client, &video_decode, "video_decode", ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS) != 0)
+      status = -14;
+   list[0] = video_decode;
+
+   // create video_render
+   if(status == 0 && ilclient_create_component(client, &video_render, "video_render", ILCLIENT_DISABLE_ALL_PORTS) != 0)
+      status = -14;
+   list[1] = video_render;
+
+   // create clock
+   if(status == 0 && ilclient_create_component(client, &clock, "clock", ILCLIENT_DISABLE_ALL_PORTS) != 0)
+      status = -14;
+   list[2] = clock;
+
+   memset(&cstate, 0, sizeof(cstate));
+   cstate.nSize = sizeof(cstate);
+   cstate.nVersion.nVersion = OMX_VERSION;
+   cstate.eState = OMX_TIME_ClockStateWaitingForStartTime;
+   cstate.nWaitMask = 1;
+   if(clock != NULL && OMX_SetParameter(ILC_GET_HANDLE(clock), OMX_IndexConfigTimeClockState, &cstate) != OMX_ErrorNone)
+      status = -13;
+
+   // create video_scheduler
+   if(status == 0 && ilclient_create_component(client, &video_scheduler, "video_scheduler", ILCLIENT_DISABLE_ALL_PORTS) != 0)
+      status = -14;
+   list[3] = video_scheduler;
+
+   set_tunnel(tunnel, video_decode, 131, video_scheduler, 10);
+   set_tunnel(tunnel+1, video_scheduler, 11, video_render, 90);
+   set_tunnel(tunnel+2, clock, 80, video_scheduler, 12);
+
+   // setup clock tunnel first
+   if(status == 0 && ilclient_setup_tunnel(tunnel+2, 0, 0) != 0)
+      status = -15;
+   else
+      ilclient_change_component_state(clock, OMX_StateExecuting);
+
+   if(status == 0)
+      ilclient_change_component_state(video_decode, OMX_StateIdle);
+
+   memset(&format, 0, sizeof(OMX_VIDEO_PARAM_PORTFORMATTYPE));
+
+   format.nSize = sizeof(OMX_VIDEO_PARAM_PORTFORMATTYPE);
+   format.nVersion.nVersion = OMX_VERSION;
+   format.nPortIndex = 130;
+   format.eCompressionFormat = OMX_VIDEO_CodingAVC;
+
+   if(status == 0 &&
+      OMX_SetParameter(ILC_GET_HANDLE(video_decode), OMX_IndexParamVideoPortFormat, &format) == OMX_ErrorNone &&
+      ilclient_enable_port_buffers(video_decode, 130, NULL, NULL, NULL) == 0)
+   {
+      OMX_BUFFERHEADERTYPE *buf;
+      int port_settings_changed = 0;
+      int first_packet = 1;
+
+      ilclient_change_component_state(video_decode, OMX_StateExecuting);
+
+      while((buf = ilclient_get_input_buffer(video_decode, 130, 1)) != NULL)
+      {
+         // feed data and wait until we get port settings changed
+
+         // printf("Waiting... buffer length:%d",buf->nAllocLen);fflush(0);
+
+         unsigned char *dest = buf->pBuffer;
+
+         // data_len += fread(dest, 1, 10000 > buf->nAllocLen-data_len ? buf->nAllocLen-data_len : 10000, in);         
+
+		int retVal;
+
+         // printf("Now we had %d bytes\n",data_len);		
+
+		int i=0;
+
+
+		/* If buffer is empty, get new data */
+		if(buflen == 0)
+		{
+         	bufptr = 0;
+
+	        /* Get all pending data in temporary buffer */
+	        do
+	        {
+	         	retVal = recvfrom(sock, iframeBuffer+buflen, IFRAME_BUFFER_LENGTH-buflen, 0, (struct sockaddr *)&recv_sock, &receiveSockaddrLen);
+
+	         	if(retVal != -1) // Nothing to read and nothing already read
+	         	{
+	         		i++;
+	         		// printf("+= %d\n",retVal);         		
+		        	buflen += retVal;
+	         	}
+
+	         }
+	         while(buflen == 0 || !(retVal == -1 && errno == EAGAIN)); // Loop while we havent read everything or last wouldn't have blocked
+	
+	         printf("Now we have %d bytes in %d rounds\n",buflen,i);
+     	}
+
+         if(buflen < buf->nAllocLen)
+         {
+         	data_len = buflen;
+         	buflen = 0;
+         }
+         else
+         {
+         	data_len = buf->nAllocLen;
+         	buflen-= buf->nAllocLen;
+         	bufptr += buf->nAllocLen;
+         }
+
+	     printf("Cousume %d bytes\n",data_len);         
+
+
+         memcpy(buf->pBuffer,iframeBuffer+bufptr,data_len);
+
+         buf->nFilledLen = data_len;
+         buf->nOffset = 0;         
+
+
+
+		// if(data_len==buf->nAllocLen)
+			// printf("GLITCH");
+
+         // fflush(0);
+
+         //fread(dest, 1, buf->nAllocLen-data_len, in);
+
+         if(port_settings_changed == 0 &&
+            ((data_len > 0 && ilclient_remove_event(video_decode, OMX_EventPortSettingsChanged, 131, 0, 0, 1) == 0) ||
+             (data_len == 0 && ilclient_wait_for_event(video_decode, OMX_EventPortSettingsChanged, 131, 0, 0, 1,
+                                                       ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 10000) == 0)))
+         {
+            port_settings_changed = 1;
+
+            if(ilclient_setup_tunnel(tunnel, 0, 0) != 0)
+            {
+               status = -7;
+               break;
+            }
+
+            ilclient_change_component_state(video_scheduler, OMX_StateExecuting);
+
+            // now setup tunnel to video_render
+            if(ilclient_setup_tunnel(tunnel+1, 0, 1000) != 0)
+            {
+               status = -12;
+               break;
+            }
+
+            ilclient_change_component_state(video_render, OMX_StateExecuting);
+         }
+         if(!data_len)
+            break;
+
+         data_len = 0;
+
+         if(first_packet)
+         {
+            buf->nFlags = OMX_BUFFERFLAG_STARTTIME;
+            first_packet = 0;
+         }
+         else
+            buf->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN;
+
+         if(OMX_EmptyThisBuffer(ILC_GET_HANDLE(video_decode), buf) != OMX_ErrorNone)
+         {
+            status = -6;
+            break;
+         }
+      }
+
+      buf->nFilledLen = 0;
+      buf->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN | OMX_BUFFERFLAG_EOS;
+
+      if(OMX_EmptyThisBuffer(ILC_GET_HANDLE(video_decode), buf) != OMX_ErrorNone)
+         status = -20;
+
+      // wait for EOS from render
+      ilclient_wait_for_event(video_render, OMX_EventBufferFlag, 90, 0, OMX_BUFFERFLAG_EOS, 0,
+                              ILCLIENT_BUFFER_FLAG_EOS, -1);
+
+      // need to flush the renderer to allow video_decode to disable its input port
+      ilclient_flush_tunnels(tunnel, 0);
+
+   }
+
+   close(sock);
+
+   ilclient_disable_tunnel(tunnel);
+   ilclient_disable_tunnel(tunnel+1);
+   ilclient_disable_tunnel(tunnel+2);
+   ilclient_disable_port_buffers(video_decode, 130, NULL, NULL, NULL);
+   ilclient_teardown_tunnels(tunnel);
+
+   ilclient_state_transition(list, OMX_StateIdle);
+   ilclient_state_transition(list, OMX_StateLoaded);
+
+   ilclient_cleanup_components(list);
+
+   OMX_Deinit();
+
+   ilclient_destroy(client);
+   return status;
 }
 
-int main(int argc, char** argv)
+int main (int argc, char **argv)
 {
-	/* 
-  * Setup listening socket on given port 
-  */
-  printf("[main] Port %d\n", atoi(argv[1]));
-
-
-	setup_receiveSocket(atoi(argv[1]));
-
-  char *decodeComponentName;
-  char *renderComponentName;
-
-  int err;
-  ILCLIENT_T  *handle;
-  COMPONENT_T *decodeComponent;
-  COMPONENT_T *renderComponent;
-
-  OMX_BUFFERHEADERTYPE *buff_header;
-
-  decodeComponentName = "video_decode";
-  renderComponentName = "video_render";
-
-  bcm_host_init();
-
-  handle = ilclient_init();
-  
-  vcos_log_set_level(VCOS_LOG_CATEGORY, VCOS_LOG_TRACE);
-  
-  if (handle == NULL) {
-    fprintf(stderr, "[main][ERROR] IL client init failed\n");
-    exit(1);
-  }
-
-  if (OMX_Init() != OMX_ErrorNone) {
-    ilclient_destroy(handle);
-    fprintf(stderr, "[main][ERROR] OMX init failed\n");
-    exit(1);
-  }
-
-  ilclient_set_error_callback(handle,error_callback,NULL);
-  ilclient_set_eos_callback(handle,eos_callback,NULL);
-  ilclient_set_port_settings_callback(handle,port_settings_callback,NULL);
-  ilclient_set_empty_buffer_done_callback(handle,empty_buffer_done_callback,NULL);
-
-  setup_decodeComponent(handle, decodeComponentName, &decodeComponent);
-  setup_renderComponent(handle, renderComponentName, &renderComponent);
-
-  /* Input port */
-  err = ilclient_enable_port_buffers(decodeComponent, 130, NULL, NULL, NULL);
-  
-  if (err < 0) {
-    fprintf(stderr, "[main][ERROR] Couldn't enable buffers\n");
-    exit(1);
-  }
-
-  ilclient_enable_port(decodeComponent, 130);
-
-  err = ilclient_change_component_state(decodeComponent,OMX_StateExecuting);
-
-  if (err < 0) {
-    fprintf(stderr, "[main][ERROR] Couldn't change state to Executing\n");
-    exit(1);
-  }
-
-  printState(ilclient_get_handle(decodeComponent));
-
-  /* Wait for first packet, containing extradata */
-  printf("[main] Waiting for decoder config...\n");
-  fflush(0);
-
-  extradatasize = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
-  extradata = (void *)buffer;
-
-  printf("[main] Got %d bytes for config\n",extradatasize);
-  fflush(0);
-
-  /* Configure stream */
-  SendDecoderConfig(decodeComponent);
-
-
-    /* read frames from the file */
- //    while (av_read_frame(pFormatCtx, &pkt) >= 0) {
-	// printf("Read pkt\n");
-
-	// AVPacket orig_pkt = pkt;
-	// if (pkt.stream_index == video_stream_idx) {
-	//     printf("  read video pkt %d\n", pkt.size);
-
-	//     buff_header = 
-	// 	ilclient_get_input_buffer(decodeComponent,
-	// 				  130,
-	// 				  1 /* block */);
-	//     if (buff_header != NULL) {
-	// 	copy_into_buffer_and_empty(&pkt,
-	// 				   decodeComponent,
-	// 				   buff_header);
-	//     } else {
-	// 	fprintf(stderr, "Couldn't get a buffer\n");
-	//     }
-
-
-	//     err = ilclient_wait_for_event(decodeComponent, 
-	// 				 OMX_EventPortSettingsChanged, 
-	// 				 131, 0, 0, 1,
-	// 				 ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 
-	// 				 0);
-	//     if (err < 0) {
-	// 	printf("No port settings change\n");
-	// 	//exit(1);
-	//     } else {
-	// 	printf("Port settings changed\n");
-	// 	// exit(0);
-	// 	break;
-	//     }
-
-
-	//     if (ilclient_remove_event(decodeComponent, 
-	// 			      OMX_EventPortSettingsChanged, 
-	// 			      131, 0, 0, 1) == 0) {
-	// 	printf("Removed port settings event\n");
-	// 	//exit(0);
-	// 	break;
-	//     } else {
-	// 	printf("No portr settting seen yet\n");
-	//     }
-	// }
-	// av_free_packet(&orig_pkt);
- //    }
-
-    // set up the tunnel between decode and render ports
-
-  TUNNEL_T tunnel;
-  
-  set_tunnel(&tunnel, decodeComponent, 131, renderComponent, 90);
-
-  if((err = ilclient_setup_tunnel(&tunnel, 0, 0)) < 0)
-  {
-    fprintf(stderr, "[main][ERROR] Error setting up tunnel %X\n", err);
-    exit(1);
-  } 
-  else
-    printf("[main] Decode tunnel set up ok\n");
-
-   
-  OMX_SendCommand(ilclient_get_handle(decodeComponent), 
-  OMX_CommandPortEnable, 131, NULL);
-   
-  ilclient_enable_port(decodeComponent, 131);
-
-  // enable the render input ports
-
-  OMX_SendCommand(ilclient_get_handle(renderComponent),OMX_CommandPortEnable, 90, NULL);
-
-  ilclient_enable_port(renderComponent, 90);
-
-    // set both components to executing state
-  err = ilclient_change_component_state(decodeComponent,OMX_StateExecuting);
-  
-  if (err < 0)
-  {
-    fprintf(stderr, "[main][ERROR] Couldn't change state to Idle\n");
-    exit(1);
-  }
-
-  err = ilclient_change_component_state(renderComponent,OMX_StateExecuting);
-
-  if (err < 0)
-  {
-    fprintf(stderr, "[main][ERROR] Couldn't change state to Idle\n");
-    exit(1);
-  }
-
-  while(1) //av_read_frame(pFormatCtx, &pkt) >= 0) 
-  {
-    /* Get avpacket */
-    int status = recvfrom(sock, buffer, buflen, 0, (struct sockaddr *)&sock_in, &sinlen);
-
-    AVPacket *pkt = (AVPacket *)buffer;
-
-		printf("[main] Read pkt\n");
-	
-		// if (pkt->stream_index != video_stream_idx) {
-		//     continue;
-		// }
-
-		/* 
-    * Do we have a decode input buffer we can fill and empty?
-    */
-		buff_header = ilclient_get_input_buffer(decodeComponent,130,1 /* block */);
-
-    int buff_size = buff_header->nAllocLen;
-    int size = status;
-
-    if(size < buff_size)
-      memcpy((unsigned char *)buff_header->pBuffer,pkt->data, pkt->size);
-    else
-    {
-      printf("[main][ERROR] Buffer not big enough %d %d\n", buff_size, size);
-      exit(-1);      
-    }    
-	
-    buff_header->nFilledLen   = size;
-    buff_header->nFlags       = 0;
-    buff_header->nFlags      |= OMX_BUFFERFLAG_ENDOFFRAME;
-
-    if(pkt->dts == 0)
-      buff_header->nFlags |= OMX_BUFFERFLAG_STARTTIME;
-    else
-    {
-      printf("[main] DTS is %s %ld\n", "str", pkt->dts);    
-    //buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
-      buff_header->nTimeStamp = ToOMXTime((uint64_t)(pkt->dts));
-    }
-
-    if(buff_header != NULL)
-      copy_into_buffer_and_empty(decodeComponent,buff_header);
-      
-  }
-
-  ilclient_wait_for_event(renderComponent,OMX_EventBufferFlag, 90, 0, OMX_BUFFERFLAG_EOS, 0,ILCLIENT_BUFFER_FLAG_EOS, 10000);
-
-  printf("EOS on render\n");
-
-  exit(0);
+   if (argc < 2) {
+      printf("Usage: %s <port>\n", argv[0]);
+      exit(1);
+   }
+   bcm_host_init();
+   return video_decode_test(atoi(argv[1]));
 } 

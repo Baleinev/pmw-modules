@@ -23,20 +23,23 @@ CFLAGS= -I . \
 	    
 LDFLAGS=  -L$(LIBDIR)
 	    
-LDLIBS= -lpthread -lopenmaxil -lbcm_host -lvcos -lvchiq_arm -lilclient -lavformat -lavfilter -lavcodec -lavutil
+LDLIBS= -lpthread -lvcos -lvchiq_arm -lGLESv2 -lEGL -lopenmaxil -lbcm_host -lvcos -lvchostif -lvchiq_arm -lilclient -lavformat -lavfilter -lavcodec -lavutil  
 
 vidplayer.o: vidplayer.c
 	$(CC) $(CFLAGS) -c vidplayer.c
 
 streamplayer.o: streamplayer.c
-	$(CC) $(CFLAGS) -c streamplayer.c	
+	$(CC) $(CFLAGS) -c streamplayer.c
+
+OMX_utils.o: OMX_utils.c
+	$(CC) $(CFLAGS) -c OMX_utils.c
 
 clean:
 	rm -f *.o
 	rm -f vidplayer
 	rm -f streamplayer
 
-all: streamplayer.o vidplayer.o
-	$(CC) $(CFLAGS) -o vidplayer vidplayer.o $(LDFLAGS) $(LDLIBS)
+all: streamplayer.o vidplayer.o OMX_utils.o
+	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o $(LDFLAGS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o streamplayer streamplayer.o $(LDFLAGS) $(LDLIBS)
 

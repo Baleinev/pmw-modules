@@ -13,6 +13,8 @@
 #include <libavutil/mathematics.h>
 #include <libavutil/samplefmt.h>
 
+#define MAX_UDP_PAYLOAD 1400
+
 static signal_recv_count;
 unsigned long now;
 unsigned long last;
@@ -24,6 +26,8 @@ AVFormatContext *pFormatCtx = NULL;
 
 uint8_t extradatasize;
 void *extradata;
+
+int fd;
 
 unsigned int fpsscale;
 unsigned int fpsrate;
@@ -48,6 +52,44 @@ unsigned long getMicroTime()
     return 1000000 * tv.tv_sec + tv.tv_usec;
 }
 
+int i=0;
+
+static AVPacket *filter(AVBitStreamFilterContext *bsfc,AVStream *in, AVPacket *rp)
+{
+  AVPacket *p;
+  AVPacket *fp;
+  
+  int rc;
+
+  if(bsfc)
+  {
+    fp = calloc(sizeof(AVPacket), 1);
+
+    rc = av_bitstream_filter_filter(bsfc,in->codec,NULL, &(fp->data), &(fp->size),rp->data, rp->size,rp->flags & AV_PKT_FLAG_KEY);
+    
+    if (rc > 0) 
+    {
+      av_free_packet(rp);
+      fp->destruct = av_destruct_packet;
+      p = fp;
+    }
+    else
+    {
+      //printf("Failed to filter frame: %d (%x)\n", rc, rc);
+      p = rp;
+    }
+  }
+  else
+  {
+    printf("No filter context \n");
+    p = rp;
+  }
+
+  printf("Packet filtere \n");  
+  
+  return p;
+}
+
 void sigalrm_handler(int signum)
 {
   now = getMicroTime();
@@ -59,15 +101,48 @@ void sigalrm_handler(int signum)
 
     if(av_read_frame(pFormatCtx, &pkt) >= 0)
     {
-        printf("[sigalrm_handler] Read pkt %d\n", pkt.size);
+      printf("[sigalrm_handler] Read pkt %d\n", pkt.size);
 
-        AVPacket orig_pkt = pkt;
+      AVBitStreamFilterContext *bsfc = av_bitstream_filter_init("h264_mp4toannexb");
+       
+      AVPacket *filtered_pkt = &pkt;
 
-        int status = sendto(sock, pkt.data, pkt.size, 0, (struct sockaddr *)&sock_in, sinlen);
-        printf("[sigalrm_handler] sendto Status = %d\n", status);        
+      if (!(
+        pkt.data[0] == 0x00 && 
+        pkt.data[1] == 0x00 && 
+        pkt.data[2] == 0x00 && 
+        pkt.data[3] == 0x01))
+          printf("BFRAME\n");
+      // filtered_pkt = filter(bsfc,video_stream, &pkt);
 
-        av_free_packet(&orig_pkt);
+      int toSend = filtered_pkt->size;
+      int sent = 0;
+
+      while(toSend != 0)
+      {
+        int toSendFragment = toSend < MAX_UDP_PAYLOAD ? toSend : MAX_UDP_PAYLOAD;
+
+        int status = sendto(sock, filtered_pkt->data+sent,toSendFragment, 0, (struct sockaddr *)&sock_in, sinlen);
+        
+        printf("[sigalrm_handler] Sent = %d sendto Status = %d\n",toSendFragment, status);   
+
+        if(status != toSendFragment)
+        {
+          printf("[sigalrm_handler][ERROR] %d",errno);
+          exit(-1);
+        }       
+        sent    += status;
+        toSend  -= status;  
+      }
+
+
+      // fwrite(pkt->data, pkt->size,1,fd);
+
+      av_free_packet(filtered_pkt);
     }
+    else
+        avformat_seek_file(pFormatCtx,0,0,0,10,AVSEEK_FLAG_BACKWARD);
+
 }
 
 int setup_broadcastSocket(unsigned int port)
@@ -108,6 +183,9 @@ int setup_demuxer(const char *filename)
     // Register all formats and codecs
     av_register_all();
 
+
+
+
     if(avformat_open_input(&pFormatCtx, filename, NULL, NULL)!=0) {
         fprintf(stderr, "Can't get format\n");
         return -1; // Couldn't open file
@@ -139,7 +217,7 @@ int setup_demuxer(const char *filename)
         time_base_num         = video_stream->time_base.num;
         time_base_den         = video_stream->time_base.den;
 
-        printf("Rate %d scale %d time base %d %d extra data size %d\n",
+        printf("Rate %d scale %d time base %d / %d extra data size %d\n",
             video_stream->r_frame_rate.num,
             video_stream->r_frame_rate.den,
             video_stream->time_base.num,
@@ -157,17 +235,17 @@ int setup_demuxer(const char *filename)
 
 int main(int argc,const char * args[])
 {
-   now = getMicroTime();
+  now = getMicroTime();
 
-   printf("Open file %s\n",args[1]);
+  printf("Open file %s\n",args[1]);
 
-   fflush(0);
+  fflush(0);
 
-   setup_demuxer(args[1]);
+  setup_demuxer(args[1]);
 
-    broadcastIP = args[2];            /* First arg:  broadcast IP address */    
+  broadcastIP = args[2];            /* First arg:  broadcast IP address */    
 
-   setup_broadcastSocket(atoi(args[3]));
+  setup_broadcastSocket(atoi(args[3]));
 
   fflush(0);
 
@@ -177,13 +255,24 @@ int main(int argc,const char * args[])
   timer.it_value.tv_sec = 0;
   timer.it_value.tv_usec = 1;
 
+  float usec = (float)video_stream->r_frame_rate.den / (float)video_stream->r_frame_rate.num * (float)1000000;
+
   /* We want a repetitive timer */
   timer.it_interval.tv_sec = 0;
-  timer.it_interval.tv_usec = (unsigned int)((float)video_stream->time_base.den / (float)video_stream->time_base.num);
+  timer.it_interval.tv_usec = (unsigned int)usec;
+
+  printf("Interval %d / %d = %f %d \n",video_stream->r_frame_rate.den,video_stream->r_frame_rate.num,usec,(unsigned int)usec);
 
   /* Register Signal handler
    * And register for periodic timer with Kernel*/
   signal(SIGALRM, &sigalrm_handler);
+
+  fd = fopen("techno.h264","wb");
+
+
+  /* Send extradata config */
+  // int status = sendto(sock, extradata, extradatasize, 0, (struct sockaddr *)&sock_in, sinlen);
+
   setitimer(ITIMER_REAL, &timer, NULL);
 
   read(2, &a, 199);
