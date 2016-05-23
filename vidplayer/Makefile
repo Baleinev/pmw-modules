@@ -23,7 +23,13 @@ CFLAGS= -I . \
 	    
 LDFLAGS=  -L$(LIBDIR)
 	    
-LDLIBS= -lpthread -lvcos -lvchiq_arm -lGLESv2 -lEGL -lopenmaxil -lbcm_host -lvcos -lvchostif -lvchiq_arm -lilclient -lavformat -lavfilter -lavcodec -lavutil  
+LDLIBS= -lm -lpthread -lvcos -lvchiq_arm -lGLESv2 -lEGL -lopenmaxil -lbcm_host -lvcos -lvchostif -lvchiq_arm -lilclient -lavformat -lavfilter -lavcodec -lavutil
+
+cJSON/cJSON.o: cJSON/cJSON.o
+	$(MAKE) -C cJSON
+
+monitor_mapFile.o: monitor_mapFile.c
+	$(CC) $(CFLAGS) -c monitor_mapFile.c  
 
 vidplayer.o: vidplayer.c
 	$(CC) $(CFLAGS) -c vidplayer.c
@@ -39,7 +45,7 @@ clean:
 	rm -f vidplayer
 	rm -f streamplayer
 
-all: streamplayer.o vidplayer.o OMX_utils.o
-	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o $(LDFLAGS) $(LDLIBS)
+all: streamplayer.o vidplayer.o OMX_utils.o monitor_mapFile.o cJSON/cJSON.o
+	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitor_mapFile.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o streamplayer streamplayer.o $(LDFLAGS) $(LDLIBS)
 

@@ -4,16 +4,22 @@
 #include <sys/types.h>
 #include <sys/inotify.h>
 
-#include "cJSON.h"
+#include <GLES/gl.h>
+
+#include "cJSON/cJSON.h"
 #include "monitor_mapFile.h"
 
-extern static const GLbyte quadx[4*3];
+#define MAPFILE "mapping.conf"
+
+GLbyte quadx[4*3];
 
 /** Texture coordinates for the quad. */
-extern static const GLfloat texCoords[4 * 2];
+GLfloat texCoords[4 * 2];
 
 void parseFile(char *file)
 {
+    printf("[%s] File has changed\n",__FUNCTION__);
+
     FILE *f;
     long len;
     char *data;
@@ -30,13 +36,12 @@ void parseFile(char *file)
     
     cJSON *root;
     
-    root=cJSON_Parse(text);
+    root=cJSON_Parse(data);
 
     if (!root)
       printf("Error before: [%s]\n",cJSON_GetErrorPtr());
     else
     {
-
       cJSON * edges = cJSON_GetObjectItem(root,"edges");
       cJSON * crop = cJSON_GetObjectItem(root,"crop");
        
@@ -56,15 +61,17 @@ void * monitorFile(void * filename)
   fd = inotify_init();
 
   if ( fd < 0 ) {
-    perror( "[%s][ERROR] inotify_init\n",__FUNCTION__);
+    printf( "[%s][ERROR] inotify_init\n",__FUNCTION__);
+    return;
   }
 
-  wd = inotify_add_watch( fd, (char *)filename,IN_MODIFY | IN_CREATE | IN_DELETE );
+  wd = inotify_add_watch( fd, (char *)filename, IN_MODIFY | IN_CREATE | IN_DELETE );
 
   length = read( fd, buffer, BUF_LEN );  
 
   if ( length < 0 ) {
-    perror( "[%s][ERROR] read\n",__FUNCTION__);
+    printf( "[%s][ERROR] read\n",__FUNCTION__);
+    return;
   }  
 
   while ( i < length ) {
@@ -98,7 +105,31 @@ void * monitorFile(void * filename)
           printf( "[%s][ERROR] The file %s was modified.\n",__FUNCTION__, event->name );
 
           if(strcmp(event->name,MAPFILE) == 0)
+          {
+            texCoords[0] = 0.1f;  
+            texCoords[1] = 0.1f;
+            texCoords[2] = 0.1f;
+            texCoords[3] = 0.5f;
+            texCoords[4] = 0.5f;
+            texCoords[5] = 0.1f;
+            texCoords[6] = 0.5f;
+            texCoords[7] = 0.5f;
+
+            quadx[0] = -6;
+            quadx[0] = -10;
+            quadx[0] = 5;
+            quadx[0] = 6;
+            quadx[0] = -10;
+            quadx[0] = 5;
+            quadx[0] = -6;
+            quadx[0] = 10;
+            quadx[0] = 5;
+            quadx[0] = 6;
+            quadx[0] = 10;
+            quadx[0] = 5;
+
             parseFile(MAPFILE);
+          }
       
         }
       }

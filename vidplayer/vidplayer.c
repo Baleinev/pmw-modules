@@ -23,7 +23,7 @@
 #include <vcos_logging.h>
 
 #include "OMX_utils.h"
-#include "monitor_MAPDIR.h"
+#include "monitor_mapFile.h"
 
 #define VCOS_LOG_CATEGORY (&il_ffmpeg_log_category)
 static VCOS_LOG_CAT_T il_ffmpeg_log_category;
@@ -41,7 +41,7 @@ static VCOS_LOG_CAT_T il_ffmpeg_log_category;
 
 #ifdef USE_OPENGL_RENDERER 
 
-#define MAPDIR "/etc/MAPDIR.d/"
+#define MAPDIR "/etc/pmw.d/"
 
 #define IMAGE_SIZE_WIDTH 1280
 #define IMAGE_SIZE_HEIGHT 720
@@ -75,17 +75,9 @@ typedef struct
    EGLContext context;
    GLuint tex;
    GLuint tex2;   
-// model rotation vector and direction
-   GLfloat rot_angle_x_inc;
-   GLfloat rot_angle_y_inc;
-   GLfloat rot_angle_z_inc;
-// current model rotation angles
-   GLfloat rot_angle_x;
-   GLfloat rot_angle_y;
-   GLfloat rot_angle_z;
 // current distance from camera
    GLfloat distance;
-   GLfloat distance_inc;
+
 } CUBE_STATE_T;
 
 static CUBE_STATE_T _state, *state=&_state;
@@ -797,7 +789,9 @@ int main(int argc, char** argv) {
   printf("[%s] Scheduler status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
   printf("[%s] Render status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
 
+#ifdef USE_OPENGL_RENDERER 
   pthread_create(&threadMonitorFile,NULL,monitorFile,(void *)MAPDIR);
+#endif
 
     int64_t lastPts;
 
