@@ -106,28 +106,6 @@ void * monitorFile(void * filename)
 
           if(strcmp(event->name,MAPFILE) == 0)
           {
-            texCoords[0] = 0.1f;  
-            texCoords[1] = 0.1f;
-            texCoords[2] = 0.1f;
-            texCoords[3] = 0.5f;
-            texCoords[4] = 0.5f;
-            texCoords[5] = 0.1f;
-            texCoords[6] = 0.5f;
-            texCoords[7] = 0.5f;
-
-            quadx[0] = -6;
-            quadx[0] = -10;
-            quadx[0] = 5;
-            quadx[0] = 6;
-            quadx[0] = -10;
-            quadx[0] = 5;
-            quadx[0] = -6;
-            quadx[0] = 10;
-            quadx[0] = 5;
-            quadx[0] = 6;
-            quadx[0] = 10;
-            quadx[0] = 5;
-
             parseFile(MAPFILE);
           }
       

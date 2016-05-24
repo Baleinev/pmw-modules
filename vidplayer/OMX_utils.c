@@ -78,15 +78,17 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
     videoPortFormat.nIndex = 0;
     videoPortFormat.eCompressionFormat = OMX_VIDEO_CodingAVC;
     videoPortFormat.eColorFormat = OMX_COLOR_FormatUnused;
-    videoPortFormat.xFramerate = 0;
 
-    if (fpsscale > 0 && fpsrate > 0)
-        videoPortFormat.xFramerate = (long long)(1<<16)*fpsrate / fpsscale;
-    else
-        videoPortFormat.xFramerate = 25 * (1<<16);
-    
-    printf("[OMX_setVideoDecoderInputFormat] FPS num %d den %d\n", fpsrate, fpsscale);
-    printf("[OMX_setVideoDecoderInputFormat] Set frame rate to %d\n", videoPortFormat.xFramerate);
+    if(fpsscale != 0 && fpsrate != 0)
+    {
+      if (fpsscale > 0 && fpsrate > 0)
+          videoPortFormat.xFramerate = (long long)(1<<16)*fpsrate / fpsscale;
+      else
+          videoPortFormat.xFramerate = 25 * (1<<16);
+
+      printf("[OMX_setVideoDecoderInputFormat] FPS num %d den %d\n", fpsrate, fpsscale);
+      printf("[OMX_setVideoDecoderInputFormat] Set frame rate to %d\n", videoPortFormat.xFramerate);
+    }
 
     err = OMX_SetParameter(ilclient_get_handle(component),OMX_IndexParamVideoPortFormat, &videoPortFormat);
 
@@ -113,23 +115,26 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
         return -3;
     }
 
-    printf("[OMX_setVideoDecoderInputFormat] Default framerate %d\n", portParam.format.video.xFramerate);
-
-    portParam.nPortIndex = 130;
-
-    portParam.format.video.nFrameWidth  = img_width;
-    portParam.format.video.nFrameHeight = img_height;
-
-    err =  OMX_SetParameter(ilclient_get_handle(component),OMX_IndexParamPortDefinition, &portParam);
-
-    if(err != OMX_ErrorNone)
+    if(img_width != 0 && img_height != 0)
     {
-        fprintf(stderr, "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
-        return -4;
-    }
+      portParam.nPortIndex = 130;
 
+      portParam.format.video.nFrameWidth  = img_width;
+      portParam.format.video.nFrameHeight = img_height;
+
+      err =  OMX_SetParameter(ilclient_get_handle(component),OMX_IndexParamPortDefinition, &portParam);
+
+      if(err != OMX_ErrorNone)
+      {
+          fprintf(stderr, "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
+          return -4;
+      }
+
+    }
     return 0;
 }
+
+
 
 int OMX_createComponent(ILCLIENT_T  *handle, char *componentName, COMPONENT_T **component,ILCLIENT_CREATE_FLAGS_T flags)
 {
@@ -343,6 +348,24 @@ int OMX_initClock(COMPONENT_T *clockComponent)
     return 0;
 }
 
+int OMX_stopClock(COMPONENT_T *clockComponent)
+{
+  OMX_TIME_CONFIG_CLOCKSTATETYPE clockState;
+
+   memset(&clockState, 0, sizeof(clockState));
+
+   clockState.nSize = sizeof(clockState);
+   clockState.nVersion.nVersion = OMX_VERSION;
+   clockState.eState = OMX_TIME_ClockStateStopped;
+   clockState.nWaitMask = 1;
+
+   if(clock != NULL && OMX_SetParameter(ilclient_get_handle(clockComponent), OMX_IndexConfigTimeClockState, &clockState) != OMX_ErrorNone)
+      return -1;
+
+    return 0;
+}
+
+
 int OMX_changeStateToExecuting(COMPONENT_T *component)
 {
   ilclient_change_component_state(component,OMX_StateExecuting);
@@ -353,4 +376,21 @@ int OMX_changeStateToIdle(COMPONENT_T *component)
   ilclient_change_component_state(component,OMX_StateIdle);
 }
 
+int OMX_send_EOS_to_decoder(COMPONENT_T *component)
+{
+  OMX_ERRORTYPE omx_err   = OMX_ErrorNone;
 
+  OMX_BUFFERHEADERTYPE *omx_buffer = ilclient_get_input_buffer(component,130,1);
+
+  if(omx_buffer == NULL)
+  {
+      fprintf(stderr, "[%s][ERROR] Buffer error 0x%08x", __func__, omx_err);
+      return -1;
+  }
+
+  omx_buffer->nOffset = 0;
+  omx_buffer->nFilledLen = 0;
+  omx_buffer->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN | OMX_BUFFERFLAG_EOS;
+  
+  OMX_EmptyThisBuffer(ILC_GET_HANDLE(component), omx_buffer);
+}

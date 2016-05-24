@@ -33,6 +33,10 @@ int OMX_startClock(COMPONENT_T *clockComponent);
 
 int OMX_initClock(COMPONENT_T *clockComponent);
 
+int OMX_stopClock(COMPONENT_T *clockComponent);
+
 int OMX_changeStateToExecuting(COMPONENT_T *component);
 
 int OMX_changeStateToIdle(COMPONENT_T *component);
+
+int OMX_send_EOS_to_decoder(COMPONENT_T *component);
