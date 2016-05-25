@@ -53,7 +53,7 @@
 #define SOUND_CLIENT_PORT 7862
 #define SOUND_CLIENT_IP "192.168.1.254"
 
-#define CONF_FILE "/etc/fireworks_mapping.conf"
+#define CONF_FILE "/etc/pmw.d/mapping.conf"
 
 uint32_t screen_width;
 uint32_t screen_height;

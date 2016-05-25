@@ -21,12 +21,15 @@ CFLAGS= -I . \
 	    -DOMX -DOMX_SKIP64BIT -ftree-vectorize -pipe -DUSE_EXTERNAL_OMX -DHAVE_LIBBCM_HOST -DUSE_EXTERNAL_LIBBCM_HOST \
 	    -DUSE_VCHIQ_ARM -Wno-psabi -DHAVE_CONFIG_H
 	    
-LDFLAGS=  -L$(LIBDIR)
+LDFLAGS= -L$(LIBDIR)
 	    
 LDLIBS= -lm -lpthread -lvcos -lvchiq_arm -lGLESv2 -lEGL -lopenmaxil -lbcm_host -lvcos -lvchostif -lvchiq_arm -lilclient -lavformat -lavfilter -lavcodec -lavutil
 
-cJSON/cJSON.o: cJSON/cJSON.o
+cJSON/cJSON.o: cJSON/cJSON.c
 	$(MAKE) -C cJSON
+
+inputSocket.o: inputSocket.c
+	$(CC) $(CFLAGS) -c inputSocket.c  
 
 monitor_mapFile.o: monitor_mapFile.c
 	$(CC) $(CFLAGS) -c monitor_mapFile.c  
@@ -45,7 +48,7 @@ clean:
 	rm -f vidplayer
 	rm -f streamplayer
 
-all: streamplayer.o vidplayer.o OMX_utils.o monitor_mapFile.o cJSON/cJSON.o
-	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitor_mapFile.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
+all: streamplayer.o vidplayer.o OMX_utils.o monitor_mapFile.o inputSocket.o cJSON/cJSON.o
+	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitor_mapFile.o inputSocket.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o streamplayer streamplayer.o $(LDFLAGS) $(LDLIBS)
 

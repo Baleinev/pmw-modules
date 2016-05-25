@@ -4,10 +4,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define USE_OPENGL_RENDERER
-
-#ifdef USE_OPENGL_RENDERER
-
 #define PI 3.14159265
 
 #include <math.h>
@@ -18,7 +14,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
-#endif
+#include <ilclient.h>
 
 #include <interface/vmcs_host/khronos/IL/OMX_Core.h>
 #include <interface/vmcs_host/khronos/IL/OMX_Component.h>
@@ -26,28 +22,36 @@
 #include <bcm_host.h>
 #include <vcos_logging.h>
 
-#include "OMX_utils.h"
-#include "monitor_mapFile.h"
-
-#define VCOS_LOG_CATEGORY (&il_ffmpeg_log_category)
-static VCOS_LOG_CAT_T il_ffmpeg_log_category;
-
-#include <ilclient.h>
-
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/samplefmt.h>
 
+#include "OMX_utils.h"
+#include "monitor_mapFile.h"
+#include "inputSocket.h"
+
+#define VCOS_LOG_CATEGORY (&il_ffmpeg_log_category)
+static VCOS_LOG_CAT_T il_ffmpeg_log_category;
+
 #define INBUF_SIZE 4096
 #define AUDIO_INBUF_SIZE 20480
 #define AUDIO_REFILL_THRESH 4096
 
-#ifdef USE_OPENGL_RENDERER 
-
 #define MAPDIR "/etc/pmw.d/"
+#define MAPFILE "/etc/pmw.d/mapping.conf"
 
 // float timeInc = 0;
+
+char currentFile[128];
+char requestedFile[128];
+struct timeval timestampBegin;
+int shouldQuit;
+int shouldReloop;
+int isPaused;
+
+pthread_mutex_t playbackMutex;
+pthread_cond_t condPaused;
 
 float p[4][2] = {
   {-1,-1},
@@ -75,9 +79,6 @@ typedef struct
 } CUBE_STATE_T;
 
 static CUBE_STATE_T _state, *state=&_state;
-
-#endif
-
 
 unsigned int uWidth;
 unsigned int uHeight;
@@ -116,7 +117,7 @@ void port_settings_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data)
 
 void empty_buffer_done_callback(void *userdata, COMPONENT_T *comp)
 {
-    printf("[%s] Got empty buffer done\n",__FUNCTION__);
+    // printf("[%s] Got empty buffer done\n",__FUNCTION__);
 }
 
 int get_file_size(char *fname)
@@ -165,17 +166,20 @@ OMX_ERRORTYPE copy_into_buffer_and_empty(AVPacket *pkt,COMPONENT_T *component,OM
       if (size <= 0) 
           buff_header->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
 
-      printf("  DTS is %s %ld\n", "str", pkt->dts);
-      printf("  PTS is %s %ld\n", "str", pkt->pts);
+      // printf("  DTS is %s %ld\n", "str", pkt->dts);
+      // printf("  PTS is %s %ld\n", "str", pkt->pts);
 
       if (pkt->dts == 0)
       {
-          printf("START\n");fflush(0);
+          // printf("START\n");fflush(0);
           buff_header->nFlags |= OMX_BUFFERFLAG_STARTTIME;
+          buff_header->nTimeStamp = ToOMXTime((uint64_t)0);
+          buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
       }
       else 
       {
         /* With this bufferless player we d'ont need timestamps */
+          buff_header->nTimeStamp = ToOMXTime((uint64_t)0);        
           buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
           // buff_header->nTimeStamp = ToOMXTime((uint64_t) ((pkt->pts+timestampOffset) * 1000000/ time_base_den));
           // printf("Time stamp %d\n", buff_header->nTimeStamp);
@@ -187,7 +191,7 @@ OMX_ERRORTYPE copy_into_buffer_and_empty(AVPacket *pkt,COMPONENT_T *component,OM
           fprintf(stderr, "Empty buffer error %s\n",
               OMX_err2str(r));
       } else {
-          printf("Emptying buffer %p\n", buff_header);
+          // printf("Emptying buffer %p\n", buff_header);
       }
 
       if (size > 0) {
@@ -210,7 +214,7 @@ static AVPacket *filter(AVBitStreamFilterContext *bsfc,AVStream *in, AVPacket *r
 
     rc = av_bitstream_filter_filter(bsfc,in->codec,NULL, &(fp->data), &(fp->size),rp->data, rp->size,rp->flags);
     
-    printf("Filtered \n");
+    // printf("Filtered \n");
 
     if (rc > 0) 
     {
@@ -249,7 +253,7 @@ int setup_demuxer(const char *filename, int *frame_width,int *frame_height)
     }
 
     // printf("Format:\n");
-    av_dump_format(pFormatCtx, 0, filename, 0);
+    // av_dump_format(pFormatCtx, 0, filename, 0);
 
     int ret;
     ret = av_find_best_stream(pFormatCtx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
@@ -269,11 +273,11 @@ int setup_demuxer(const char *filename, int *frame_width,int *frame_height)
         time_base_num = video_stream->time_base.num;
         time_base_den = video_stream->time_base.den;
 
-        printf("Rate %d scale %d time base %d %d\n",
-            video_stream->r_frame_rate.num,
-            video_stream->r_frame_rate.den,
-            video_stream->time_base.num,
-            video_stream->time_base.den);
+        // printf("Rate %d scale %d time base %d %d\n",
+        //     video_stream->r_frame_rate.num,
+        //     video_stream->r_frame_rate.den,
+        //     video_stream->time_base.num,
+        //     video_stream->time_base.den);
 
         // AVCodec *codec = avcodec_find_decoder(video_stream->codec->codec_id);
 
@@ -284,7 +288,6 @@ int setup_demuxer(const char *filename, int *frame_width,int *frame_height)
     return 0;
 }
 
-#ifdef USE_OPENGL_RENDERER
 
 void my_fill_buffer_done(void* data, COMPONENT_T* comp)
 {
@@ -296,7 +299,7 @@ void my_fill_buffer_done(void* data, COMPONENT_T* comp)
 
 static void redraw_scene(CUBE_STATE_T *state)
 {
-   printf("[redraw_scene] Draw\n");
+   // printf("[redraw_scene] Draw\n");
 
   //  glLoadIdentity();
   //  // move camera back to see the cube
@@ -525,7 +528,12 @@ int init_ogl(CUBE_STATE_T *state)
     glEnable(GL_BLEND);
     
     glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
-    
+
+    glEnable(GL_POINT_SMOOTH);
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+
     glMatrixMode(GL_MODELVIEW); 
 }
 
@@ -663,12 +671,61 @@ static void init_model_proj(CUBE_STATE_T *state)
   
 }
 
-#endif
-
-
 int main(int argc, char** argv) 
 {
-  unsigned int fileIndex = 0;
+  char buffer[1024];
+
+  FILE *f = fopen(MAPFILE, "r");
+  unsigned int len;
+          
+  if(f!=NULL)
+  { 
+    fgets(buffer, 1024, f);    
+    sscanf(buffer,"%f,%f,%f,%f,%f,%f,%f,%f\n",
+                &p[0][0],
+                &p[0][1],
+                &p[1][0],
+                &p[1][1],
+                &p[2][0],
+                &p[2][1],
+                &p[3][0],
+                &p[3][1]         
+    );
+    // fgets(buffer, 1024, f);    
+    // sscanf(buffer,"%d,%d\n",
+    //             &s[0],
+    //             &s[1]           
+    // ); 
+    // fgets(buffer, 1024, f);    
+    // sscanf(buffer,"%d,%d",
+    //             &o[0],
+    //             &o[1]           
+    // );     
+
+    
+    printf("Loaded conf: %f,%f,%f,%f,%f,%f,%f,%f\n%d,%d\n%d,%d",
+                p[0][0],
+                p[0][1],
+                p[1][0],
+                p[1][1],
+                p[2][0],
+                p[2][1],
+                p[3][0]);
+                // p[3][1],
+                // s[0],
+                // s[1],
+                // o[0],
+                // o[1]);
+    
+   fclose(f);  
+  }
+
+  shouldQuit = 0;
+  shouldReloop = 0;
+  isPaused = 0;
+
+  pthread_mutex_init(&playbackMutex,NULL);
+  pthread_cond_init(&condPaused,NULL);
 
   unsigned int frame_width,frame_height;
 
@@ -681,8 +738,8 @@ int main(int argc, char** argv)
   COMPONENT_T *clockComponent;
   COMPONENT_T *renderComponent;
 
-
   pthread_t threadMonitorFile; 
+  pthread_t threadInputSocket;
 
   TUNNEL_T decodeTunnel,schedulerTunnel,clockTunnel;    
 
@@ -709,18 +766,31 @@ int main(int argc, char** argv)
 
   if (OMX_Init() != OMX_ErrorNone) {
       ilclient_destroy(handle);
-      fprintf(stderr, "OMX init failed\n");
+      fprintf(stderr, "[%s] OMX init failed\n",__FUNCTION__);
       exit(1);
   }
 
-  AVPacket *pkt =   calloc(sizeof(AVPacket), 1);
-
+  AVPacket *pkt = calloc(sizeof(AVPacket), 1);
 
   bsfc = av_bitstream_filter_init("h264_mp4toannexb");  
 
-  printf("[main] Setting up demuxer with file %s...\n",argv[fileIndex]);fflush(0);    
-  setup_demuxer(argv[((fileIndex++)%(argc-1))+1],&frame_width,&frame_height);
+  printf("[%s] Getting height/with from command line\n",__FUNCTION__);
 
+  frame_width = atoi(argv[1]);
+  frame_height = atoi(argv[2]);
+
+  printf("[%s] height/with: %d,%d \n",__FUNCTION__,frame_height,frame_width);  
+
+  if(argc > 3)
+  {
+    strcpy(currentFile,argv[3]);
+    strcpy(requestedFile,argv[3]);    
+
+    printf("[main] Setting up demuxer with file %s...\n",currentFile);fflush(0);    
+    setup_demuxer(currentFile,&frame_width,&frame_height);
+
+    gettimeofday(&timestampBegin,NULL);    
+  }
 
   printf("[%s] Setting callbacks...\n",__FUNCTION__);fflush(0);        
   ilclient_set_error_callback(handle,error_callback,NULL);
@@ -758,9 +828,7 @@ int main(int argc, char** argv)
   OMX_createComponent(handle, "egl_render", &renderComponent,ILCLIENT_DISABLE_ALL_PORTS|ILCLIENT_ENABLE_OUTPUT_BUFFERS); 
   OMX_createComponent(handle, "clock", &clockComponent,ILCLIENT_DISABLE_ALL_PORTS);
   OMX_createComponent(handle, "video_scheduler", &schedulerComponent, ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS);
-     
-
-
+    
   printf("[%s] Init clock...\n",__FUNCTION__);fflush(0);    
   OMX_initClock(clockComponent);
 
@@ -792,7 +860,6 @@ int main(int argc, char** argv)
   OMX_setVideoDecoderInputFormat(decodeComponent,0,0,frame_width,frame_height);
 
   // OMX_setVideoDecoderInputFormat(decodeComponent,0,0,0,0);
-
 
   printf("[%s] decodeComponent to executing state...\n",__FUNCTION__);fflush(0);          
 
@@ -898,24 +965,19 @@ int main(int argc, char** argv)
 
   // pthread_create(&threadMonitorFile,NULL,monitorFile,(void *)MAPDIR);
 
+  pthread_create(&threadInputSocket,NULL,inputSocket,NULL);
+
   int64_t lastPts = 0;
 
-  struct timeval timestampBegin;
+ // Startclock is not usefull when we dont need the services of video_sceduler 
+  // printf("[%s] Start clock...\n",__FUNCTION__);fflush(0);            
 
-  gettimeofday(&timestampBegin,NULL);
+  // OMX_startClock(clockComponent);
 
-/* Startclock is not usefull when we dont need the services of video_sceduler 
-  printf("[%s] Start clock...\n",__FUNCTION__);fflush(0);            
-
-  OMX_startClock(clockComponent);
-*/
-
-  while(1)
+  while(!shouldQuit)
   {     
-        while (av_read_frame(pFormatCtx, pkt) >= 0)
+        while (!shouldQuit && pFormatCtx != NULL && av_read_frame(pFormatCtx, pkt) >= 0)
         {
-
-
             // printf("Read pkt after port settings %d\n", pkt.size);fflush(0);
             // fwrite(pkt.data, 1, pkt.size, out);
 
@@ -953,11 +1015,11 @@ int main(int argc, char** argv)
 
               unsigned int timeElapsedSinceBeginningMs = (timestampNow.tv_sec-timestampBegin.tv_sec)*1000+(timestampNow.tv_usec-timestampBegin.tv_usec)/1000; 
 
-              printf("[%s] Time since begin,packet: %d,%d\n",__FUNCTION__,timeElapsedSinceBeginningMs,packetTimestampMs);fflush(0);            
+              // printf("[%s] Time since begin,packet: %d,%d\n",__FUNCTION__,timeElapsedSinceBeginningMs,packetTimestampMs);fflush(0);            
 
               if(packetTimestampMs > timeElapsedSinceBeginningMs)
               {
-                printf("[%s] Sleeping %d\n",__FUNCTION__,(packetTimestampMs-timeElapsedSinceBeginningMs)*1000);fflush(0);            
+                // printf("[%s] Sleeping %d\n",__FUNCTION__,(packetTimestampMs-timeElapsedSinceBeginningMs)*1000);fflush(0);            
                 usleep((packetTimestampMs-timeElapsedSinceBeginningMs)*1000);
               }
 
@@ -976,35 +1038,106 @@ int main(int argc, char** argv)
             av_free_packet(pkt);     
 
             redraw_scene(state); 
+
+            /* Other file requested? or paused? */
+            pthread_mutex_lock(&playbackMutex);
+
+            while(isPaused)
+            {
+              glClear( GL_COLOR_BUFFER_BIT );
+              eglSwapBuffers(state->display, state->surface);              
+
+              printf("PAUSE\n");
+
+              pthread_cond_wait(&condPaused,&playbackMutex);
+            }
+
+            if(strcmp(currentFile,requestedFile)<0)
+            {
+              printf("EXIT LOOP, FILE CHANGED\n");
+
+              pthread_mutex_unlock(&playbackMutex);
+              break;
+            }
+
+            if(shouldReloop)
+            {
+              shouldReloop = 0;
+              printf("EXIT LOOP; RELOOP REQUEST\n");
+              pthread_mutex_unlock(&playbackMutex);
+              break;              
+            }
+
+            pthread_mutex_unlock(&playbackMutex);
         }
 
-        printf("Timestamp offset was %lld\n",(long long)timestampOffset);        
+        // printf("Timestamp offset was %lld\n",(long long)timestampOffset);
 
+        /* Open next file for reading */
+        pthread_mutex_lock(&playbackMutex);
 
-        timestampOffset += lastPts*time_base_num*1000/time_base_den;
+        /* If file changed, load it asap */
+        if(strcmp(currentFile,requestedFile) != 0)
+        {
+          strcpy(currentFile,requestedFile);
 
-        avformat_close_input(&pFormatCtx);
+          printf("Next is %s\n",currentFile);
+
+          timestampOffset = 0;
+
+          avformat_close_input(&pFormatCtx);
+          setup_demuxer(currentFile,&frame_width,&frame_height);          
+
+          gettimeofday(&timestampBegin,NULL);
+        }
+        /* Rewind this file */
+        else
+        {
+          // printf("Loop\n");
+// 
+          timestampOffset += lastPts*time_base_num*1000/time_base_den;
+
+          // if(avformat_seek_file(&pFormatCtx,video_stream_idx,0,0,999999,AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY)<0)
+          // {
+          //   printf("Cannot seek\n");            
+            avformat_close_input(&pFormatCtx);
+            setup_demuxer(currentFile,&frame_width,&frame_height);
+          // }
+        }
+
+        pthread_mutex_unlock(&playbackMutex);
+
+          // avformat_close_input(&pFormatCtx);
       
-        setup_demuxer(argv[((fileIndex++)%(argc-1))+1],&frame_width,&frame_height);
+          // setup_demuxer(currentFile,&frame_width,&frame_height);
+
     
-        printf("Timestamp offset is now %lld (+= %lld)\n",(long long)timestampOffset,(long long)lastPts);        
-    }
+        // printf("Timestamp offset is now %lld (+= %lld)\n",(long long)timestampOffset,(long long)lastPts);     
 
-        // OMX_SendCommand(ILC_GET_HANDLE(decodeComponent),OMX_CommandFlush,130,NULL);
-        // OMX_SendCommand(ILC_GET_HANDLE(decodeComponent),OMX_CommandFlush,131,NULL);
+    //     OMX_SendCommand(ilclient_get_handle(decodeComponent),OMX_CommandFlush,130,NULL);
+    //     OMX_SendCommand(ilclient_get_handle(decodeComponent),OMX_CommandFlush,131,NULL);
 
-        // ilclient_wait_for_event(decodeComponent, OMX_EventCmdComplete, OMX_CommandFlush, 0, 130, 0, ILCLIENT_PORT_FLUSH, -1);
-        // ilclient_wait_for_event(decodeComponent, OMX_EventCmdComplete, OMX_CommandFlush, 0, 131, 0, ILCLIENT_PORT_FLUSH, -1);
+    //     printf(".\n");fflush(0);
 
-        // OMX_send_EOS_to_decoder(decodeComponent);        
+    //     ilclient_wait_for_event(decodeComponent, OMX_EventCmdComplete, OMX_CommandFlush, 0, 130, 0, ILCLIENT_PORT_FLUSH, -1);
+    //     ilclient_wait_for_event(decodeComponent, OMX_EventCmdComplete, OMX_CommandFlush, 0, 131, 0, ILCLIENT_PORT_FLUSH, -1);
 
-        // OMX_stopClock(clockComponent);
+    //     printf(".\n");fflush(0);
 
-        // OMX_initClock(clockComponent);        
+    //     OMX_send_EOS_to_decoder(decodeComponent);        
 
+    //     OMX_stopClock(clockComponent);
 
-    /* The following doesn't seem to work if a eos callback is already attached */
-      // ilclient_wait_for_event(renderComponent, OMX_EventBufferFlag, 90, 0, OMX_BUFFERFLAG_EOS, 0,~ ILCLIENT_BUFFER_FLAG_EOS, 10000);
+    //     OMX_initClock(clockComponent);        
+
+    //     printf(".\n");fflush(0);
+
+    // /* The following doesn't seem to work if a eos callback is already attached */
+    //   ilclient_wait_for_event(renderComponent, OMX_EventBufferFlag, 220, 0, OMX_BUFFERFLAG_EOS, 0,ILCLIENT_BUFFER_FLAG_EOS, 10000);
+
+    //     printf(".\n");fflush(0);
+
+}
 
 
 // ilclient_wait_for_event(renderComponent, OMX_EventBufferFlag, 220, 0, OMX_BUFFERFLAG_EOS, 0,ILCLIENT_BUFFER_FLAG_EOS, 100);
