@@ -135,7 +135,6 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
 }
 
 
-
 int OMX_createComponent(ILCLIENT_T  *handle, char *componentName, COMPONENT_T **component,ILCLIENT_CREATE_FLAGS_T flags)
 {
   int err;

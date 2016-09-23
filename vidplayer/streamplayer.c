@@ -39,7 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "ilclient.h"
 
 #define IFRAME_BUFFER_LENGTH (1024*1024)
-
+ 
 static int open_listening_socket(unsigned int udp_port)
 {
 	int sock;

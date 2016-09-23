@@ -28,11 +28,14 @@ LDLIBS= -lm -lpthread -lvcos -lvchiq_arm -lGLESv2 -lEGL -lopenmaxil -lbcm_host -
 cJSON/cJSON.o: cJSON/cJSON.c
 	$(MAKE) -C cJSON
 
-inputSocket.o: inputSocket.c
-	$(CC) $(CFLAGS) -c inputSocket.c  
+inputThread.o: inputThread.c
+	$(CC) $(CFLAGS) -c inputThread.c
 
-monitor_mapFile.o: monitor_mapFile.c
-	$(CC) $(CFLAGS) -c monitor_mapFile.c  
+commandThread.o: commandThread.c
+	$(CC) $(CFLAGS) -c commandThread.c  	
+
+monitorThread.o: monitorThread.c
+	$(CC) $(CFLAGS) -c monitorThread.c  
 
 vidplayer.o: vidplayer.c
 	$(CC) $(CFLAGS) -c vidplayer.c
@@ -48,7 +51,7 @@ clean:
 	rm -f vidplayer
 	rm -f streamplayer
 
-all: streamplayer.o vidplayer.o OMX_utils.o monitor_mapFile.o inputSocket.o cJSON/cJSON.o
-	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitor_mapFile.o inputSocket.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
+all: streamplayer.o vidplayer.o OMX_utils.o monitorThread.o commandThread.o inputThread.o cJSON/cJSON.o
+	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitorThread.o commandThread.o inputThread.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o streamplayer streamplayer.o $(LDFLAGS) $(LDLIBS)
 
