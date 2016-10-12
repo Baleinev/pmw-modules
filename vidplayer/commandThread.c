@@ -15,6 +15,8 @@
 
 #include "commandThread.h"
 
+#include "vidplayer.h"
+
 int sourceUDPsocket;
 int sourceUDPport;
 char sourceFILEname[FILENAME_SIZE];
@@ -84,7 +86,7 @@ void *commandThread(void *param)
 
   /*"address already in use" error message */
   if(setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
-    printf("[%s][%s][%d][ERROR] setsockopt failed\n",__FILE__,__FUNCTION__,__LINE__);fflush(0);       
+    DBG("[%s][%s][%d][ERROR] setsockopt failed\n",__FILE__,__FUNCTION__,__LINE__);       
 
   memset(buffer, '0', BUFFER_SIZE);
   memset(&serv_addr, '0', sizeof(serv_addr));
@@ -103,7 +105,7 @@ void *commandThread(void *param)
   /* keep track of the biggest file descriptor */
   fdmax = listener; /* so far, it's this one*/  
 
-  printf("[%s][%s][%d] Waiting for connection\n",__FILE__,__FUNCTION__,__LINE__);fflush(0);              
+  printf("[%s][%s][%d] Waiting for connection\n",__FILE__,__FUNCTION__,__LINE__);              
 
   while(!flagQuit)
   {    
@@ -111,11 +113,11 @@ void *commandThread(void *param)
 
     if(select(fdmax+1, &read_fds, NULL, NULL, NULL) == -1)
     {
-      printf("[%s][%s][%d][ERROR] select failed\n",__FILE__,__FUNCTION__,__LINE__);fflush(0);              
+      DBG("[%s][%s][%d][ERROR] select failed\n",__FILE__,__FUNCTION__,__LINE__);              
       return 1;
     }
 
-    printf("[%s][%s][%d] Got one\n",__FILE__,__FUNCTION__,__LINE__);fflush(0);                   
+    DBG("[%s][%s][%d] Got one\n",__FILE__,__FUNCTION__,__LINE__);                   
 
     for(i = 0; i <= fdmax; i++)
     {
@@ -129,7 +131,7 @@ void *commandThread(void *param)
 
           if((newfd = accept(listener, (struct sockaddr *)&clientaddr, &addrlen)) == -1)
           {
-            printf("[%s][%s][%d][ERROR] accept failed\n",__FILE__,__FUNCTION__,__LINE__);fflush(0);              
+            DBG("[%s][%s][%d][ERROR] accept failed\n",__FILE__,__FUNCTION__,__LINE__);              
           }
           else
           {
@@ -141,7 +143,7 @@ void *commandThread(void *param)
             { /* keep track of the maximum */
               fdmax = newfd;
             }
-            printf("[%s][%s][%d] New connection from %s on socket %d\n",__FILE__,__FUNCTION__,__LINE__,inet_ntoa(clientaddr.sin_addr), newfd);
+            DBG("[%s][%s][%d] New connection from %s on socket %d\n",__FILE__,__FUNCTION__,__LINE__,inet_ntoa(clientaddr.sin_addr), newfd);
           }
         }
         else
@@ -155,10 +157,14 @@ void *commandThread(void *param)
           {
             /* got error or connection closed by client */
             if(nbytes == 0)
+            {
             /* connection closed */
-              printf("[%s][%s][%d] Socket %d hung up. errno:%d\n",__FILE__,__FUNCTION__,__LINE__, i,errno);
+              DBG("[%s][%s][%d] Socket %d hung up. errno:%d\n",__FILE__,__FUNCTION__,__LINE__, i,errno);
+            }
             else
-              printf("[%s][%s][%d] recv()error on socket %d return: %d error %d, closing",__FILE__,__FUNCTION__,__LINE__,i,nbytes,errno);
+            {
+              DBG("[%s][%s][%d] recv()error on socket %d return: %d error %d, closing",__FILE__,__FUNCTION__,__LINE__,i,nbytes,errno);
+            }
 
             /* close it... */
             close(i);
@@ -175,7 +181,7 @@ void *commandThread(void *param)
             {
               *boundary = '\0';
 
-              printf("[%s][%s][%d] Buffer %s\n",__FILE__,__FUNCTION__,__LINE__,buffer);fflush(0);                            
+              DBG("[%s][%s][%d] Buffer %s\n",__FILE__,__FUNCTION__,__LINE__,buffer);
 
               cJSON * root = cJSON_Parse(buffer);
 

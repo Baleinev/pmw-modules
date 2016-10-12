@@ -9,7 +9,9 @@
 #include <interface/vmcs_host/khronos/IL/OMX_Core.h>
 #include <interface/vmcs_host/khronos/IL/OMX_Component.h>
 
+#include "vidplayer.h"
 #include "OMX_utils.h"
+
 
 #ifdef OMX_SKIP64BIT
 OMX_TICKS ToOMXTime(int64_t pts)
@@ -37,8 +39,8 @@ int OMX_configureClockComponentForPlayback(COMPONENT_T *clockComponent)
 
   if(err != OMX_ErrorNone)
   {
-      fprintf(stderr, "[OMX_configureClockComponentForPlayback] COMXCoreComponent::SetConfig - %s failed with omx_err(0x%x)\n","clock", err);
-      return -1;
+    ERR( "[OMX_configureClockComponentForPlayback] COMXCoreComponent::SetConfig - %s failed with omx_err(0x%x)\n","clock", err);
+    return -1;
   }
 
   OMX_TIME_CONFIG_SCALETYPE scaleType;
@@ -49,7 +51,7 @@ int OMX_configureClockComponentForPlayback(COMPONENT_T *clockComponent)
   err = OMX_SetConfig(ilclient_get_handle(clockComponent),OMX_IndexConfigTimeScale, &scaleType);
 
   if(err != OMX_ErrorNone){
-    fprintf(stderr, "[OMX_configureClockComponentForPlayback] COMXCoreComponent::SetConfig - %s failed with omx_err(0x%x)\n","clock", err);
+    ERR( "[OMX_configureClockComponentForPlayback] COMXCoreComponent::SetConfig - %s failed with omx_err(0x%x)\n","clock", err);
     return -2;
   }
 }
@@ -59,7 +61,7 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
     int err;
 
     // set input video format
-    printf("[OMX_setVideoDecoderInputFormat] Setting video decoder format\n");
+    DBG("[OMX_setVideoDecoderInputFormat] Setting video decoder format\n");
     OMX_VIDEO_PARAM_PORTFORMATTYPE videoPortFormat;
 
     memset(&videoPortFormat, 0, sizeof(OMX_VIDEO_PARAM_PORTFORMATTYPE));
@@ -70,7 +72,7 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
     err = OMX_GetParameter(ilclient_get_handle(component),
         OMX_IndexParamVideoPortFormat, &videoPortFormat);
     if (err != OMX_ErrorNone) {
-        fprintf(stderr, "Error getting video decoder format %s\n", OMX_err2str(err));
+        ERR( "Error getting video decoder format %s\n", OMX_err2str(err));
         return -1;
     }
 
@@ -86,17 +88,17 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
       else
           videoPortFormat.xFramerate = 25 * (1<<16);
 
-      printf("[OMX_setVideoDecoderInputFormat] FPS num %d den %d\n", fpsrate, fpsscale);
-      printf("[OMX_setVideoDecoderInputFormat] Set frame rate to %d\n", videoPortFormat.xFramerate);
+      DBG("[OMX_setVideoDecoderInputFormat] FPS num %d den %d\n", fpsrate, fpsscale);
+      DBG("[OMX_setVideoDecoderInputFormat] Set frame rate to %d\n", videoPortFormat.xFramerate);
     }
 
     err = OMX_SetParameter(ilclient_get_handle(component),OMX_IndexParamVideoPortFormat, &videoPortFormat);
 
     if (err != OMX_ErrorNone) {
-        fprintf(stderr, "[OMX_setVideoDecoderInputFormat] Error setting video decoder format %s\n", OMX_err2str(err));
+        ERR( "[OMX_setVideoDecoderInputFormat] Error setting video decoder format %s\n", OMX_err2str(err));
         return -2;
     } else
-        printf("Video decoder format set up ok\n");
+        DBG("Video decoder format set up ok\n");
     
 
     OMX_PARAM_PORTDEFINITIONTYPE portParam;
@@ -111,7 +113,7 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
 
     if(err != OMX_ErrorNone)
     {
-        fprintf(stderr, "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
+        ERR( "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
         return -3;
     }
 
@@ -126,7 +128,7 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
 
       if(err != OMX_ErrorNone)
       {
-          fprintf(stderr, "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
+          ERR( "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
           return -4;
       }
 
@@ -139,25 +141,25 @@ int OMX_createComponent(ILCLIENT_T  *handle, char *componentName, COMPONENT_T **
 {
   int err;
 
-  printf("[%s] ilclient_create_component %s \n",__FUNCTION__,componentName);fflush(0);
+  DBG("[%s] ilclient_create_component %s \n",__FUNCTION__,componentName);fflush(0);
 
   err = ilclient_create_component(handle,component,componentName,flags);
 
   if (err == -1) {
-      fprintf(stderr, "[OMX_createComponent] %s create failed\n",componentName);
+      ERR(stderr, "[OMX_createComponent] %s create failed\n",componentName);
       return 1;
   }
-  printf("[%s] New state: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(*component)));
+  DBG("[%s] New state: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(*component)));
 
-  printf("[%s] ilclient_change_component_state  %s\n",__FUNCTION__,componentName);fflush(0);
+  DBG("[%s] ilclient_change_component_state  %s\n",__FUNCTION__,componentName);fflush(0);
 
   err = ilclient_change_component_state(*component,OMX_StateIdle);
 
   if (err < 0) {
-      fprintf(stderr, "[OMX_createComponent] Couldn't change %s state to Idle\n",componentName);
+      ERR("[OMX_createComponent] Couldn't change %s state to Idle\n",componentName);
       return 1;
   }
-  printf("[%s] New state: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(*component)));
+  DBG("[%s] New state: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(*component)));
 }
 
 int OMX_sendDecoderConfig(COMPONENT_T *component,char *extradata,int extradatasize)
@@ -170,7 +172,7 @@ int OMX_sendDecoderConfig(COMPONENT_T *component,char *extradata,int extradatasi
 
         if(omx_buffer == NULL)
         {
-            fprintf(stderr, "[%s][ERROR] Buffer error 0x%08x", __func__, omx_err);
+            ERR( "[%s][ERROR] Buffer error 0x%08x", __func__, omx_err);
             return -1;
         }
 
@@ -179,7 +181,7 @@ int OMX_sendDecoderConfig(COMPONENT_T *component,char *extradata,int extradatasi
 
         if(omx_buffer->nFilledLen > omx_buffer->nAllocLen)
         {
-            fprintf(stderr, "[%s][ERROR] omx_buffer->nFilledLen > omx_buffer->nAllocLen",  __func__);
+            ERR( "[%s][ERROR] omx_buffer->nFilledLen > omx_buffer->nAllocLen",  __func__);
             return -2;
         }
 
@@ -192,10 +194,10 @@ int OMX_sendDecoderConfig(COMPONENT_T *component,char *extradata,int extradatasi
 
         if (omx_err != OMX_ErrorNone)
         {
-            fprintf(stderr, "[%s][ERROR] OMX_EmptyThisBuffer() failed with result(0x%x)\n", __func__, omx_err);
+            ERR( "[%s][ERROR] OMX_EmptyThisBuffer() failed with result(0x%x)\n", __func__, omx_err);
             return -3;
         } else
-            printf("[%s] Config sent, emptying buffer %d\n",__func__,extradatasize);
+            DBG("[%s] Config sent, emptying buffer %d\n",__func__,extradatasize);
         
     }
     return 0;
@@ -208,7 +210,7 @@ char * OMX_getStateString(OMX_HANDLETYPE handle)
 
     err = OMX_GetState(handle, &state);
     if (err != OMX_ErrorNone) {
-        fprintf(stderr, "Error on getting state\n");
+        ERR( "Error on getting state\n");
         exit(1);
     }
     switch (state) {
@@ -282,22 +284,22 @@ void OMX_printClockState(COMPONENT_T *clockComponent)
     OMX_IndexConfigTimeClockState, &clockState);
 
     if (err != OMX_ErrorNone) {
-        fprintf(stderr, "[OMX_printClockState][ERROR] getting clock state %s\n", OMX_err2str(err));
+        ERR( "[OMX_printClockState][ERROR] getting clock state %s\n", OMX_err2str(err));
         return;
     }
 
     switch (clockState.eState) {
         case OMX_TIME_ClockStateRunning:
-        printf("[OMX_printClockState] Clock running\n");
+        DBG("[OMX_printClockState] Clock running\n");
     break;
         case OMX_TIME_ClockStateWaitingForStartTime:
-        printf("[OMX_printClockState] Clock waiting for start time\n");
+        DBG("[OMX_printClockState] Clock waiting for start time\n");
     break;
         case OMX_TIME_ClockStateStopped:
-        printf("[OMX_printClockState] Clock stopped\n");
+        DBG("[OMX_printClockState] Clock stopped\n");
     break;
     default:
-        printf("Clock in other state\n");
+        DBG("Clock in other state\n");
     }
 }
 
@@ -314,7 +316,7 @@ int OMX_startClock(COMPONENT_T *clockComponent)
   err = OMX_GetConfig(ilclient_get_handle(clockComponent),OMX_IndexConfigTimeClockState, &clockState);
 
   if (err != OMX_ErrorNone) {
-      fprintf(stderr, "[%s][ERROR] Error getting clock state %s\n", __FUNCTION__,OMX_err2str(err));
+      ERR( "[%s][ERROR] Error getting clock state %s\n", __FUNCTION__,OMX_err2str(err));
       return -1;
   }
 
@@ -323,7 +325,7 @@ int OMX_startClock(COMPONENT_T *clockComponent)
   err = OMX_SetConfig(ilclient_get_handle(clockComponent),OMX_IndexConfigTimeClockState, &clockState);
 
   if (err != OMX_ErrorNone) {
-      fprintf(stderr, "[%s][ERROR] Error starting clock %s\n",  __FUNCTION__,OMX_err2str(err));
+      ERR( "[%s][ERROR] Error starting clock %s\n",  __FUNCTION__,OMX_err2str(err));
       return -2;
   }
 
@@ -383,7 +385,7 @@ int OMX_send_EOS_to_decoder(COMPONENT_T *component)
 
   if(omx_buffer == NULL)
   {
-      fprintf(stderr, "[%s][ERROR] Buffer error 0x%08x", __func__, omx_err);
+      ERR( "[%s][ERROR] Buffer error 0x%08x", __func__, omx_err);
       return -1;
   }
 

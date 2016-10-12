@@ -26,6 +26,9 @@
 #include "monitorThread.h"
 #include "commandThread.h"
 #include "inputThread.h"
+#include "circularBufferCollection.h"
+
+#include "vidplayer.h"
 
 #define VCOS_LOG_CATEGORY (&il_ffmpeg_log_category)
 static VCOS_LOG_CAT_T il_ffmpeg_log_category;
@@ -33,14 +36,18 @@ static VCOS_LOG_CAT_T il_ffmpeg_log_category;
 /*
  * Frame buffer and its monitor, declared in inputThread
  */
-extern unsigned int iframeBufferPos;
-extern iframeBuffer[IFRAME_BUFFER_LENGTH];
+// extern unsigned int iframeBufferPos;
+// extern iframeBuffer[IFRAME_BUFFER_LENGTH];
+extern CircularBufferCollection *bufferArray;
 
 extern pthread_mutex_t newDataAvailableMutex;
 extern pthread_cond_t newDataAvailableCond;
 extern unsigned int flagNewDataAvailable;
 
 extern unsigned int flagIsFirst;
+extern unsigned int udpWait;
+
+extern unsigned int frameBufferCount;
 
 /*
  * Source configuration variables, declared in the command Thread
@@ -96,22 +103,22 @@ unsigned int uHeight;
 
 static void eos_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data)
 {
-  fprintf(stderr,"[%s][%s] Got eos event from %s\n",__FILE__,__FUNCTION__);fflush(stderr);
+  DBG("[%s][%s] Got eos event from %s\n",__FILE__,__FUNCTION__);
 }
 
 static void error_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data)
 {
-  fprintf(stderr,"[%s][%s][ERROR] OMX error %s\n",__FILE__,__FUNCTION__,OMX_err2str(data));fflush(stderr);
+  ERR("[%s][%s][ERROR] OMX error %s\n",__FILE__,__FUNCTION__,OMX_err2str(data));
 }
 
 static void port_settings_callback(void *userdata, COMPONENT_T *comp, OMX_U32 data)
 {
-  fprintf(stderr,"[%s] Got port Settings event\n",__FILE__,__FUNCTION__);fflush(stderr);
+  DBG("[%s] Got port Settings event\n",__FILE__,__FUNCTION__);
 }
 
 static void empty_buffer_done_callback(void *userdata, COMPONENT_T *comp)
 {
-  fprintf(stderr,"[%s] Got empty buffer done\n",__FUNCTION__);fflush(stderr);
+  DBG("[%s] Got empty buffer done\n",__FUNCTION__);
 }
 
 static OMX_ERRORTYPE copy_into_buffer_and_empty(uint8_t *content,int size,int flagIsFirst,COMPONENT_T *component,OMX_BUFFERHEADERTYPE *buff_header)
@@ -130,17 +137,17 @@ static OMX_ERRORTYPE copy_into_buffer_and_empty(uint8_t *content,int size,int fl
     isFull = size >=buff_header->nFilledLen;
 
     if(isFull)
-      fprintf(stderr, "[%s][%s][ERROR] Buffer full, force flush \n",__FILE__,__FUNCTION__);fflush(stderr);
+      DBG( "[%s][%s][ERROR] Buffer full, force flush \n",__FILE__,__FUNCTION__);
 
     buff_header->nFilledLen = (size > buff_size-1) ? buff_size-1 : size;
     buff_header->nOffset = 0;
 
-    fprintf(stderr, "[%s][%s] Copying a chunk of %d/%d bytes\n",__FILE__,__FUNCTION__,size,buff_size);fflush(stderr);
+    DBG( "[%s][%s] Copying a chunk of %d/%d bytes\n",__FILE__,__FUNCTION__,size,buff_size);
 
     memset(buff_header->pBuffer, 0x0, buff_size);
     memcpy(buff_header->pBuffer, content, buff_header->nFilledLen);
 
-    fprintf(stderr, "[%s][%s] Done copying a chunk of %d/%d bytes\n",__FILE__,__FUNCTION__,size,buff_size);fflush(stderr);      
+    DBG( "[%s][%s] Done copying a chunk of %d/%d bytes\n",__FILE__,__FUNCTION__,size,buff_size);      
     
     size -= buff_header->nFilledLen;
     content += buff_header->nFilledLen;
@@ -150,7 +157,7 @@ static OMX_ERRORTYPE copy_into_buffer_and_empty(uint8_t *content,int size,int fl
     memcpy((unsigned char *)buff_header->pBuffer, 
     pkt->data, size);
     } else {
-    printf("Buffer not big enough %d %d\n", buff_size, size);
+    DBG("Buffer not big enough %d %d\n", buff_size, size);
     return -1;
     }
 
@@ -159,15 +166,15 @@ static OMX_ERRORTYPE copy_into_buffer_and_empty(uint8_t *content,int size,int fl
 
     buff_header->nFlags = 0;
 
-    if (isFull || (size <= 0 && sourceType != SOURCE_UDP))
+    if (/*isFull || */(size <= 0 && sourceType != SOURCE_UDP))
         buff_header->nFlags |= OMX_BUFFERFLAG_ENDOFFRAME;
 
-    // printf("  DTS is %s %ld\n", "str", pkt->dts);
-    // printf("  PTS is %s %ld\n", "str", pkt->pts);
+    // DBG("  DTS is %s %ld\n", "str", pkt->dts);
+    // DBG("  PTS is %s %ld\n", "str", pkt->pts);
 
     if (flagIsFirst/*pkt->dts == 0*/)
     {
-        // printf("START\n");fflush(0);
+        // DBG("START\n");
         buff_header->nFlags = OMX_BUFFERFLAG_STARTTIME;
         // buff_header->nTimeStamp = ToOMXTime((uint64_t)0);
         // buff_header->nFlags |= OMX_BUFFERFLAG_TIME_UNKNOWN;
@@ -178,29 +185,29 @@ static OMX_ERRORTYPE copy_into_buffer_and_empty(uint8_t *content,int size,int fl
         // buff_header->nTimeStamp = ToOMXTime((uint64_t)0);        
         buff_header->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN;
         // buff_header->nTimeStamp = ToOMXTime((uint64_t) ((pkt->pts+timestampOffset) * 1000000/ time_base_den));
-        // printf("Time stamp %d\n", buff_header->nTimeStamp);
+        // DBG("Time stamp %d\n", buff_header->nTimeStamp);
     }
 
-    fprintf(stderr, "[%s][%s] Empty buffer\n",__FILE__,__FUNCTION__,buff_size);fflush(stderr);      
+    DBG( "[%s][%s] Empty buffer\n",__FILE__,__FUNCTION__,buff_size);      
 
     r = OMX_EmptyThisBuffer(ilclient_get_handle(component),buff_header);
 
-    fprintf(stderr, "[%s][%s] Done\n",__FILE__,__FUNCTION__,buff_size);fflush(stderr);      
+    DBG( "[%s][%s] Done\n",__FILE__,__FUNCTION__,buff_size);      
 
     if (r != OMX_ErrorNone)
-        fprintf(stderr, "[%s][%s] Empty buffer error %s\n",__FILE__,__FUNCTION__,OMX_err2str(r));fflush(stderr);
+        DBG( "[%s][%s] Empty buffer error %s\n",__FILE__,__FUNCTION__,OMX_err2str(r));
     // else {
-    //     // printf("Emptying buffer %p\n", buff_header);
+    //     // DBG("Emptying buffer %p\n", buff_header);
     // }
 
-    fprintf(stderr, "[%s][%s] Residual size %d\n",__FILE__,__FUNCTION__,size);fflush(stderr);      
+    DBG( "[%s][%s] Residual size %d\n",__FILE__,__FUNCTION__,size);      
 
     if (size > 0)
         buff_header = ilclient_get_input_buffer(component,130,1 /* block */);
     
   }
 
-  fprintf(stderr, "[%s][%s] Returning \n",__FILE__,__FUNCTION__);fflush(stderr);        
+  DBG( "[%s][%s] Returning \n",__FILE__,__FUNCTION__);        
   
   return r;
 }
@@ -208,117 +215,32 @@ static OMX_ERRORTYPE copy_into_buffer_and_empty(uint8_t *content,int size,int fl
 static void my_fill_buffer_done(void* data, COMPONENT_T* comp)
 {
   if (OMX_FillThisBuffer(ilclient_get_handle(comp), eglBuffer) != OMX_ErrorNone)
-    sprintf(stderr,"[%s][%s][ERROR] OMX_FillThisBuffer failed in callback\n",__FILE__,__FUNCTION__);
+    DBG("[%s][%s][ERROR] OMX_FillThisBuffer failed in callback\n",__FILE__,__FUNCTION__);
 }
+
+GLfloat orthoVtx[12];
+GLfloat orthoTex[16];
+
+GLubyte orthoIndices[6] = {1,0,2,2,0,3};
 
 static void redraw_scene(QUAD_STATE_T *state)
 {
-   // printf("[redraw_scene] Draw\n");
 
-  //  glLoadIdentity();
-  //  // move camera back to see the cube
-  //  glTranslatef(0.f, 0.f, -state->distance);
-   
-  //  // Start with a clear screen
-  //  glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
-  //  // Need to rotate textures - do this by rotating each cube face
-  //  glRotatef(270.f, 0.f, 0.f, 1.f ); // front face normal along z axis
 
-  //  // // draw first 4 vertices
-  //  // glDrawArrays( GL_TRIANGLE_STRIP, 0, 4);
+    // glBindTexture(GL_TEXTURE_2D, state->tex);
 
-  // glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glVertexPointer(3, GL_FLOAT, 0, orthoVtx);
+    glTexCoordPointer(4, GL_FLOAT, 0, orthoTex);
 
-  // glBindTexture(GL_TEXTURE_2D, bufferText);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, orthoIndices);
 
-  // glVertexPointer(3, GL_FLOAT, 0, orthoVtx2);
-  // glTexCoordPointer(4, GL_FLOAT, 0, orthotex);
+  // glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+  // glDisableClientState(GL_VERTEX_ARRAY);
 
-  GLfloat orthoMat[16] =
-  {
-    1.0f/(state->screen_width/2.0f),0,0,0,
-    0,1.0f/(state->screen_height/2.0f),0,0,
-    0,0,1,0,
-    0,0,0,1
-  };
+  // glBindTexture(GL_TEXTURE_2D, 0);
 
-/* 
- * Indices order:
- *
- * 3 -- 2
- * |    |
- * 0 -- 1
- *
- * Must be drawn clockwise
- */
-
-  GLubyte orthoIndices[] = {1,0,2,2,0,3};
-
-  GLfloat orthoVtx[16] = 
-  {
-    (state->screen_width/2.0f)*p[0][0], (state->screen_height/2.0f)*p[0][1], 0.0f,
-    (state->screen_width/2.0f)*p[1][0], (state->screen_height/2.0f)*p[1][1], 0.0f,
-    (state->screen_width/2.0f)*p[2][0], (state->screen_height/2.0f)*p[2][1], 0.0f,
-    (state->screen_width/2.0f)*p[3][0], (state->screen_height/2.0f)*p[3][1], 0.0f
-  };
-  
-  float ax = p[2][0] - p[0][0];
-  float ay = p[2][1] - p[0][1];
-  float bx = p[3][0] - p[1][0];
-  float by = p[3][1] - p[1][1];
-
-  float cross = ax * by - ay * bx;
-
-  float cy = p[0][1] - p[1][1];
-  float cx = p[0][0] - p[1][0];
-
-  float s = (ax * cy - ay * cx) / cross;
-  float t = (bx * cy - by * cx) / cross;
-
-  float q0 = 1 / (1 - t);
-  float q1 = 1 / (1 - s);
-  float q2 = 1 / t;
-  float q3 = 1 / s;  
-  
-  GLfloat orthoTex[16] =
-  {
-    o[0][0]*q0, o[0][1]*q0, 0.0f*q0,1.0f*q0,
-    o[1][0]*q1, o[1][1]*q1, 0.0f*q1,1.0f*q1,
-    o[2][0]*q2, o[2][1]*q2, 0.0f*q2,1.0f*q2,
-    o[3][0]*q3, o[3][1]*q3, 0.0f*q3,1.0f*q3
-  };       
-  
-  glViewport(0, 0, state->screen_width, state->screen_height);
-
-  glPushMatrix();
-
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-
-  glLoadMatrixf(orthoMat);
-
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
-
-  glDisable(GL_BLEND);
-
-  glEnableClientState(GL_VERTEX_ARRAY);
-  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-  glBindTexture(GL_TEXTURE_2D, state->tex);
-
-  glVertexPointer(3, GL_FLOAT, 0, orthoVtx);
-  glTexCoordPointer(4, GL_FLOAT, 0, orthoTex);
-
-  glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, orthoIndices);
-
-  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-  glDisableClientState(GL_VERTEX_ARRAY);
-
-  glBindTexture(GL_TEXTURE_2D, 0);
-
-  glPopMatrix();
+  // glPopMatrix();
 
   eglSwapBuffers(state->display, state->surface);
 }
@@ -356,7 +278,7 @@ static int init_ogl(QUAD_STATE_T *state)
 
    if(state->display==EGL_NO_DISPLAY)
    {
-    sprintf(stderr,"[%s][%s][ERROR] Cannot eglGetDisplay\n",__FILE__,__FUNCTION__);
+    ERR("[%s][%s][ERROR] Cannot eglGetDisplay\n",__FILE__,__FUNCTION__);
 
     return -1;
    }
@@ -368,7 +290,7 @@ static int init_ogl(QUAD_STATE_T *state)
    
    if(EGL_FALSE == result)
    {
-    sprintf(stderr,"[%s][%s][ERROR] Cannot eglInitialize\n",__FILE__,__FUNCTION__);fflush(0);
+    ERR("[%s][%s][ERROR] Cannot eglInitialize\n",__FILE__,__FUNCTION__);
 
     return -1;
    }
@@ -379,7 +301,7 @@ static int init_ogl(QUAD_STATE_T *state)
    
    if(EGL_FALSE == result)
    {
-    sprintf(stderr,"[%s][%s][ERROR] Cannot eglSaneChooseConfigBRCM\n",__FILE__,__FUNCTION__);fflush(0);
+    ERR("[%s][%s][ERROR] Cannot eglSaneChooseConfigBRCM\n",__FILE__,__FUNCTION__);
 
     return -1;
    }
@@ -390,7 +312,7 @@ static int init_ogl(QUAD_STATE_T *state)
 
    if(state->context==EGL_NO_CONTEXT)
    {
-    sprintf(stderr,"[%s][%s][ERROR] Cannot eglCreateContext\n",__FILE__,__FUNCTION__);fflush(0);
+    ERR("[%s][%s][ERROR] Cannot eglCreateContext\n",__FILE__,__FUNCTION__);
 
     return -1;
    }
@@ -400,12 +322,12 @@ static int init_ogl(QUAD_STATE_T *state)
 
    if(success < 0)
    {
-    sprintf(stderr,"[%s][%s][ERROR]Cannot graphics_get_display_size\n",__FILE__,__FUNCTION__);fflush(0);
+    ERR("[%s][%s][ERROR]Cannot graphics_get_display_size\n",__FILE__,__FUNCTION__);
 
     return -1;
    }   
 
-   printf("[%s][%s] Screen size %d x %d\n",__FILE__,__FUNCTION__,state->screen_width,state->screen_height);fflush(0);
+   DBG("[%s][%s] Screen size %d x %d\n",__FILE__,__FUNCTION__,state->screen_width,state->screen_height);
 
    dst_rect.x = 0;
    dst_rect.y = 0;
@@ -434,7 +356,7 @@ static int init_ogl(QUAD_STATE_T *state)
 
    if(state->surface == EGL_NO_SURFACE)
    {
-    sprintf(stderr,"[%s][%s][ERROR] Cannot eglCreateWindowSurface\n",__FILE__,__FUNCTION__);fflush(0);
+    ERR("[%s][%s][ERROR] Cannot eglCreateWindowSurface\n",__FILE__,__FUNCTION__);
 
     return -1;
    }  
@@ -444,7 +366,7 @@ static int init_ogl(QUAD_STATE_T *state)
 
    if(result == EGL_FALSE)
    {
-    sprintf(stderr,"[%s][%s][ERROR] Cannot eglMakeCurrent\n",__FILE__,__FUNCTION__);fflush(0);
+    ERR("[%s][%s][ERROR] Cannot eglMakeCurrent\n",__FILE__,__FUNCTION__);
 
     return -1;
    }     
@@ -513,7 +435,7 @@ static void init_textures(QUAD_STATE_T *state,unsigned int textureWidth,unsigned
     
    if (eglImage == EGL_NO_IMAGE_KHR)
    {
-      printf("[init_textures][ERROR] eglCreateImageKHR failed.\n");
+      ERR("[init_textures][ERROR] eglCreateImageKHR failed.\n");
       exit(1);
    }
 
@@ -550,7 +472,7 @@ static void exit_func(void)
   if (eglImage != 0)
   {
     if (!eglDestroyImageKHR(state->display, (EGLImageKHR) eglImage))
-      fprintf(stderr, "[%s][%s][ERROR] eglDestroyImageKHR failed\n",__FILE__,__FUNCTION__);
+      ERR( "[%s][%s][ERROR] eglDestroyImageKHR failed\n",__FILE__,__FUNCTION__);
   }
 
   // clear screen
@@ -565,11 +487,13 @@ static void exit_func(void)
 
   bcm_host_deinit();   
 
-  printf("[%s][%s] Close callback completed\n",__FILE__,__FUNCTION__);
+  DBG("[%s][%s] Close callback completed\n",__FILE__,__FUNCTION__);
 }
 
 int main(int argc, char** argv) 
 {
+  struct timeval last,now;
+
   unsigned int frame_width,frame_height;
 
   int err;
@@ -589,67 +513,88 @@ int main(int argc, char** argv)
 
   OMX_BUFFERHEADERTYPE *buff_header;
 
-  printf("[%s][%s] Init host...\n",__FILE__,__FUNCTION__);fflush(0);
+  /*
+  * Getting args
+  */
 
-  bcm_host_init();
+  DBG("[%s][%s] Getting height/with from command line\n",__FILE__,__FUNCTION__);
 
-  printf("[%s][%s] Init ilclient...\n",__FILE__,__FUNCTION__);fflush(0);    
-
-  handle = ilclient_init();
-
-  vcos_log_set_level(VCOS_LOG_CATEGORY, VCOS_LOG_TRACE);
-
-  if (handle == NULL) {
-      fprintf(stderr, "[%s][%s][ERROR] IL client init failed\n",__FILE__,__FUNCTION__);
-      exit(-1);
+  if(argc < 3)
+  {
+    ERR("[%s][%s] Usage: %s height width <udpWait> <frameBufferCount> <source> \n",__FILE__,__FUNCTION__);
+    exit(-1);
   }
-
-  printf("[%s][%s] Init host...\n",__FILE__,__FUNCTION__);fflush(0);    
-
-  if (OMX_Init() != OMX_ErrorNone) {
-      ilclient_destroy(handle);
-      fprintf(stderr, "[%s][%s][ERROR] OMX init failed\n",__FILE__,__FUNCTION__);
-      exit(-2);
-  }
-
-  printf("[%s][%s] Getting height/with from command line\n",__FILE__,__FUNCTION__);
 
   frame_width = atoi(argv[1]);
   frame_height = atoi(argv[2]);
 
-  printf("[%s] height/with: %d,%d \n",__FUNCTION__,frame_height,frame_width);  
+  DBG("[%s] height/with: %d,%d \n",__FUNCTION__,frame_height,frame_width);  
   
+  /* UDP burst time is specified */
+  if(argc > 3)
+    udpWait = atoi(argv[3]);
+
+  if(argc > 4)
+    frameBufferCount = atoi(argv[4]);
+
+  bufferArray = circularBufferCollectionInit(FRAME_BUFFER_LENGTH,frameBufferCount);    
+
+  LOG("[%s] height/with/udpWait/buffersCount: %d,%d,%d,%d \n",__FUNCTION__,frame_height,frame_width,udpWait,frameBufferCount);  
+
   /* If source is specified */
-  if(argc > 3) 
+  if(argc > 5) 
   {
     pthread_mutex_lock(&sourceMutex);
 
     flagSourceChanged = 1;
 
-    if(strstr(argv[3],"udp://@:") != NULL)
+    if(strstr(argv[5],"udp://@:") != NULL)
     {
-      printf("[%s][%s] Source UDP\n",__FILE__,__FUNCTION__);fflush(0);          
+      DBG("[%s][%s] Source UDP\n",__FILE__,__FUNCTION__);          
       sourceType = SOURCE_UDP;
-      sscanf(argv[3],"udp://@:%d",&sourceUDPport);
+      sscanf(argv[5],"udp://@:%d",&sourceUDPport);
 
-      printf("[%s][%s] UDP Port\n",__FILE__,__FUNCTION__,sourceUDPport);fflush(0);                
+      DBG("[%s][%s] UDP Port\n",__FILE__,__FUNCTION__,sourceUDPport);                
     }
     else
     {
-      printf("[%s][%s] Source FILE\n",__FILE__,__FUNCTION__);fflush(0);                
+      DBG("[%s][%s] Source FILE\n",__FILE__,__FUNCTION__);                
       sourceType = SOURCE_FILE;
-      strncpy(sourceFILEname,argv[3],FILENAME_SIZE);
+      strncpy(sourceFILEname,argv[4],FILENAME_SIZE);
     }
 
-
-    printf("[%s][%s] Setting up demuxer with file %s...\n",__FILE__,__FUNCTION__,sourceFILEname);fflush(0);    
+    DBG("[%s][%s] Setting up demuxer with file %s...\n",__FILE__,__FUNCTION__,sourceFILEname);    
     
     pthread_cond_signal(&sourceCond);
 
     pthread_mutex_unlock(&sourceMutex);    
   }
 
-  printf("[%s][%s] Setting callbacks...\n",__FILE__,__FUNCTION__);fflush(0); 
+
+  DBG("[%s][%s] Init host...\n",__FILE__,__FUNCTION__);
+
+  bcm_host_init();
+
+  DBG("[%s][%s] Init ilclient...\n",__FILE__,__FUNCTION__);    
+
+  handle = ilclient_init();
+
+  vcos_log_set_level(VCOS_LOG_CATEGORY, VCOS_LOG_TRACE);
+
+  if (handle == NULL) {
+      ERR( "[%s][%s][ERROR] IL client init failed\n",__FILE__,__FUNCTION__);
+      exit(-1);
+  }
+
+  DBG("[%s][%s] Init host...\n",__FILE__,__FUNCTION__);    
+
+  if (OMX_Init() != OMX_ErrorNone) {
+      ilclient_destroy(handle);
+      ERR( "[%s][%s][ERROR] OMX init failed\n",__FILE__,__FUNCTION__);
+      exit(-2);
+  }
+
+  DBG("[%s][%s] Setting callbacks...\n",__FILE__,__FUNCTION__); 
 
   ilclient_set_error_callback(handle,error_callback,NULL);
   ilclient_set_eos_callback(handle,eos_callback,NULL);
@@ -662,19 +607,19 @@ int main(int argc, char** argv)
   // Clear application state
   memset( state, 0, sizeof( *state ) );
 
-  printf("[%s][%s] Init OpenGL...\n",__FILE__,__FUNCTION__);fflush(0);       
+  DBG("[%s][%s] Init OpenGL...\n",__FILE__,__FUNCTION__);       
 
   // Start OGLES
   init_ogl(state);
 
-  printf("[%s][%s] Init textures...\n",__FILE__,__FUNCTION__);fflush(0);    
+  DBG("[%s][%s] Init textures...\n",__FILE__,__FUNCTION__);    
 
   // initialise the OGLES texture(s)
   init_textures(state,frame_width,frame_height);
 
   state->alreadyInit = 1;       
 
-  printf("[%s][%s] Create components...\n",__FILE__,__FUNCTION__);fflush(0);    
+  DBG("[%s][%s] Create components...\n",__FILE__,__FUNCTION__);    
 
 /* Create all OMX components*/
   OMX_createComponent(handle, "video_decode", &decodeComponent,ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS);
@@ -682,10 +627,10 @@ int main(int argc, char** argv)
   OMX_createComponent(handle, "clock", &clockComponent,ILCLIENT_DISABLE_ALL_PORTS);
   OMX_createComponent(handle, "video_scheduler", &schedulerComponent, ILCLIENT_DISABLE_ALL_PORTS | ILCLIENT_ENABLE_INPUT_BUFFERS);
     
-  printf("[%s][%s] Init clock...\n",__FILE__,__FUNCTION__);fflush(0);    
+  DBG("[%s][%s] Init clock...\n",__FILE__,__FUNCTION__);    
   OMX_initClock(clockComponent);
 
-  printf("[%s][%s] Create tunnel...\n",__FILE__,__FUNCTION__);fflush(0);      
+  DBG("[%s][%s] Create tunnel...\n",__FILE__,__FUNCTION__);      
   set_tunnel(&decodeTunnel, decodeComponent, 131, schedulerComponent, 10);
   set_tunnel(&schedulerTunnel, schedulerComponent, 11, renderComponent, 220); 
   set_tunnel(&clockTunnel, clockComponent, 80, schedulerComponent, 12);
@@ -693,24 +638,24 @@ int main(int argc, char** argv)
   /* Start the clock first */    
   if ((err = ilclient_setup_tunnel(&clockTunnel, 0, 0)) < 0) 
   {
-    fprintf(stderr, "[%s][%s][ERROR] setting up clock tunnel %X\n",__FILE__,__FUNCTION__, err);
+    ERR( "[%s][%s][ERROR] setting up clock tunnel %X\n",__FILE__,__FUNCTION__, err);
     exit(1);
   } 
   else 
   {
-    printf("[%s][%s] Clock tunnel set up ok\n",__FILE__,__FUNCTION__);
-    fflush(0);
+    DBG("[%s][%s] Clock tunnel set up ok\n",__FILE__,__FUNCTION__);
+    
   }
 
-  printf("[%s][%s] OMX_printClockState before: \n",__FILE__,__FUNCTION__);
-  fflush(0);
+  DBG("[%s][%s] OMX_printClockState before: \n",__FILE__,__FUNCTION__);
+  
 
   OMX_printClockState(clockComponent);
 
   OMX_changeStateToExecuting(clockComponent);
 
-  printf("[%s][%s] OMX_printClockState after: \n",__FILE__,__FUNCTION__);
-  fflush(0);
+  DBG("[%s][%s] OMX_printClockState after: \n",__FILE__,__FUNCTION__);
+  
 
   OMX_printClockState(clockComponent);   
 
@@ -722,7 +667,7 @@ int main(int argc, char** argv)
 
   // OMX_setVideoDecoderInputFormat(decodeComponent,0,0,0,0);
 
-  printf("[%s][%s] decodeComponent to executing state...\n",__FILE__,__FUNCTION__);fflush(0);          
+  DBG("[%s][%s] decodeComponent to executing state...\n",__FILE__,__FUNCTION__);          
 
 /* Set all components to executing state */
 
@@ -760,72 +705,72 @@ int main(int argc, char** argv)
 
 
 //   // if (ilclient_change_component_state(decodeComponent,OMX_StateExecuting) < 0) {
-//   //     fprintf(stderr, "[%s][ERROR] Couldn't change state to Executing\n",__FUNCTION__);
+//   //     DBG( "[%s][ERROR] Couldn't change state to Executing\n",__FUNCTION__);
 //   //     exit(1);
 //   // }
 
   if ((err = ilclient_setup_tunnel(&decodeTunnel, 0, 0)) < 0)
   {
-      fprintf(stderr, "[%s][%s][ERROR] Error setting up decode tunnel %X\n",__FILE__,__FUNCTION__,err);
+      ERR( "[%s][%s][ERROR] Error setting up decode tunnel %X\n",__FILE__,__FUNCTION__,err);
       exit(1);
   }
   else
   {
-      printf("[%s][%s] Decode tunnel set up ok\n",__FILE__,__FUNCTION__);
+      DBG("[%s][%s] Decode tunnel set up ok\n",__FILE__,__FUNCTION__);
   }
 
-  printf("[%s][%s] schedulerComponent to executing state...\n",__FILE__,__FUNCTION__);fflush(0);          
+  DBG("[%s][%s] schedulerComponent to executing state...\n",__FILE__,__FUNCTION__);          
 
   if ((err = ilclient_setup_tunnel(&schedulerTunnel, 0, 1000)) < 0) {
-      fprintf(stderr, "[%s][%s][ERROR] Error setting up scheduler tunnel %X\n",__FILE__,__FUNCTION__,err);
+      ERR( "[%s][%s][ERROR] Error setting up scheduler tunnel %X\n",__FILE__,__FUNCTION__,err);
       exit(1);
   } else {
-      printf("[%s][%s] Scheduler tunnel set up ok\n",__FILE__,__FUNCTION__);
+      DBG("[%s][%s] Scheduler tunnel set up ok\n",__FILE__,__FUNCTION__);
   }
 
   OMX_changeStateToExecuting(schedulerComponent);
 
-  printf("[%s][%s] Before Egl config \n",__FILE__,__FUNCTION__);
+  DBG("[%s][%s] Before Egl config \n",__FILE__,__FUNCTION__);
 
-  printf("[%s][%s] Decode status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
-  printf("[%s][%s] Clock status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
-  printf("[%s][%s] Scheduler status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
-  printf("[%s][%s] Render status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
+  DBG("[%s][%s] Decode status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
+  DBG("[%s][%s] Clock status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
+  DBG("[%s][%s] Scheduler status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
+  DBG("[%s][%s] Render status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
 
 
   // Enable the output port and tell egl_render to use the texture as a buffer
   //ilclient_enable_port(egl_render, 221); THIS BLOCKS SO CANT BE USED
   if (OMX_SendCommand(ILC_GET_HANDLE(renderComponent), OMX_CommandPortEnable, 221, NULL) != OMX_ErrorNone)
   {
-     printf("[%s][%s] OMX_CommandPortEnable failed.\n",__FILE__,__FUNCTION__);
+     DBG("[%s][%s] OMX_CommandPortEnable failed.\n",__FILE__,__FUNCTION__);
      exit(1);
   }
 
   if (OMX_UseEGLImage(ILC_GET_HANDLE(renderComponent), &eglBuffer, 221, NULL, eglImage) != OMX_ErrorNone)
   {
-     printf("[%s][%s] OMX_UseEGLImage failed.\n",__FILE__,__FUNCTION__);
+     DBG("[%s][%s] OMX_UseEGLImage failed.\n",__FILE__,__FUNCTION__);
      exit(1);
   }
 
-  printf("[%s][%s] renderComponent to executing state...\n",__FILE__,__FUNCTION__);fflush(0);          
+  DBG("[%s][%s] renderComponent to executing state...\n",__FILE__,__FUNCTION__);          
 
   OMX_changeStateToExecuting(renderComponent);
 
-  printf("[%s][%s] OMX_FillThisBuffer egl\n",__FILE__,__FUNCTION__);fflush(0);          
+  DBG("[%s][%s] OMX_FillThisBuffer egl\n",__FILE__,__FUNCTION__);          
 
   // Request egl_render to write data to the texture buffer
   if(OMX_FillThisBuffer(ilclient_get_handle(renderComponent), eglBuffer) != OMX_ErrorNone)
   {
-     printf("[%s][%s] OMX_FillThisBuffer failed.\n",__FILE__,__FUNCTION__);
+     DBG("[%s][%s] OMX_FillThisBuffer failed.\n",__FILE__,__FUNCTION__);
      exit(1);
   }
 
-  printf("[%s][%s] Before Egl config \n",__FILE__,__FUNCTION__);
+  DBG("[%s][%s] Before Egl config \n",__FILE__,__FUNCTION__);
 
-  printf("[%s][%s] Decode status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
-  printf("[%s][%s] Clock status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
-  printf("[%s][%s] Scheduler status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
-  printf("[%s][%s] Render status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
+  DBG("[%s][%s] Decode status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
+  DBG("[%s][%s] Clock status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
+  DBG("[%s][%s] Scheduler status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
+  DBG("[%s][%s] Render status: %s\n",__FILE__,__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
 
   // pthread_create(&threadMonitorFile,NULL,monitorFile,(void *)MAPDIR);
 
@@ -833,13 +778,120 @@ int main(int argc, char** argv)
   pthread_create(&threadFrameInput,NULL,inputThread,NULL);
   pthread_create(&threadMonitorFile,NULL,monitorThread,NULL);
 
-  uint8_t * frameData;
-  unsigned int frameSize;
 
  // Startclock is not usefull when we dont need the services of video_scheduler 
-  // printf("[%s] Start clock...\n",__FUNCTION__);fflush(0);            
+  // DBG("[%s] Start clock...\n",__FUNCTION__);            
 
   // OMX_startClock(clockComponent);
+  // 
+  // 
+
+  GLfloat orthoMat[16] =
+  {
+    1.0f/(state->screen_width/2.0f),0,0,0,
+    0,1.0f/(state->screen_height/2.0f),0,0,
+    0,0,1,0,
+    0,0,0,1
+  };
+
+
+
+/* 
+ * Indices order:
+ *
+ * 3 -- 2
+ * |    |
+ * 0 -- 1
+ *
+ * Must be drawn clockwise
+ */
+
+
+  // orthoVtx[12] = 
+  // {
+  //   (state->screen_width/2.0f)*p[0][0], (state->screen_height/2.0f)*p[0][1], 0.0f,
+  //   (state->screen_width/2.0f)*p[1][0], (state->screen_height/2.0f)*p[1][1], 0.0f,
+  //   (state->screen_width/2.0f)*p[2][0], (state->screen_height/2.0f)*p[2][1], 0.0f,
+  //   (state->screen_width/2.0f)*p[3][0], (state->screen_height/2.0f)*p[3][1], 0.0f
+  // };
+  //
+  //  
+  orthoVtx[0] = (state->screen_width/2.0f)*p[0][0];
+  orthoVtx[1] = (state->screen_height/2.0f)*p[0][1]; 
+  orthoVtx[2] = 0.0f;
+  orthoVtx[3] = (state->screen_width/2.0f)*p[1][0]; 
+  orthoVtx[4] = (state->screen_height/2.0f)*p[1][1]; 
+  orthoVtx[5] = 0.0f; 
+  orthoVtx[6] = (state->screen_width/2.0f)*p[2][0]; 
+  orthoVtx[7] = (state->screen_height/2.0f)*p[2][1]; 
+  orthoVtx[8] = 0.0f; 
+  orthoVtx[9] = (state->screen_width/2.0f)*p[3][0]; 
+  orthoVtx[10] = (state->screen_height/2.0f)*p[3][1]; 
+  orthoVtx[11] = 0.0f; 
+
+
+  
+  float ax = p[2][0] - p[0][0];
+  float ay = p[2][1] - p[0][1];
+  float bx = p[3][0] - p[1][0];
+  float by = p[3][1] - p[1][1];
+
+  float cross = ax * by - ay * bx;
+
+  float cy = p[0][1] - p[1][1];
+  float cx = p[0][0] - p[1][0];
+
+  float s = (ax * cy - ay * cx) / cross;
+  float t = (bx * cy - by * cx) / cross;
+
+  float q0 = 1 / (1 - t);
+  float q1 = 1 / (1 - s);
+  float q2 = 1 / t;
+  float q3 = 1 / s;  
+  
+  // orthoTex[16] =
+  // {
+  //   o[0][0]*q0, o[0][1]*q0, 0.0f*q0,1.0f*q0,
+  //   o[1][0]*q1, o[1][1]*q1, 0.0f*q1,1.0f*q1,
+  //   o[2][0]*q2, o[2][1]*q2, 0.0f*q2,1.0f*q2,
+  //   o[3][0]*q3, o[3][1]*q3, 0.0f*q3,1.0f*q3
+  // }; 
+  // 
+
+  orthoTex[0] = o[0][0]*q0;
+  orthoTex[1] = o[0][1]*q0;
+  orthoTex[2] = 0.0f*q0;    
+  orthoTex[3] = 1.0f*q0;
+  orthoTex[4] = o[1][0]*q1;
+  orthoTex[5] = o[1][1]*q1;
+  orthoTex[6] = 0.0f*q1;    
+  orthoTex[7] = 1.0f*q1;
+  orthoTex[8] = o[2][0]*q2;
+  orthoTex[9] = o[2][1]*q2;
+  orthoTex[10] = 0.0f*q2;  
+  orthoTex[11] = 1.0f*q2;
+  orthoTex[12] = o[3][0]*q3;
+  orthoTex[13] = o[3][1]*q2;
+  orthoTex[14] = 0.0f*q2;  
+  orthoTex[15] = 1.0f*q2;
+
+
+  glViewport(0, 0, state->screen_width, state->screen_height);
+
+  // glPushMatrix();
+
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+
+  glLoadMatrixf(orthoMat);
+
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity();
+
+  glDisable(GL_BLEND);
+
+  glEnableClientState(GL_VERTEX_ARRAY);
+  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 
   while(!flagQuit)
   {
@@ -848,56 +900,81 @@ int main(int argc, char** argv)
      */
     pthread_mutex_lock(&newDataAvailableMutex);
 
+    // LOG("[%s][%s] Wait \n",__FILE__,__FUNCTION__);
+
     while(!flagNewDataAvailable && !flagQuit)
     {
-      fprintf(stderr, "[%s][%s] Here am I, still waiting...\n",__FILE__,__FUNCTION__);fflush(stderr);      
+      DBG("[%s][%s] Here am I, still waiting...\n",__FILE__,__FUNCTION__);      
       pthread_cond_wait(&newDataAvailableCond,&newDataAvailableMutex);
-      fprintf(stderr, "[%s][%s] Wait loop \n",__FILE__,__FUNCTION__);fflush(stderr);      
+      DBG("[%s][%s] Wait loop \n",__FILE__,__FUNCTION__);      
     }
 
-    fprintf(stderr, "[%s][%s] Wait finished! \n",__FILE__,__FUNCTION__);fflush(stderr);
+    // LOG("[%s][%s] Wait finished! \n",__FILE__,__FUNCTION__);
 
-    frameSize = iframeBufferPos;
-    frameData = iframeBuffer;
+    unsigned int currentBufferIndex = bufferArray->readIndex;
+    unsigned int *currentBufferCurrentSize = &(bufferArray->buffers[currentBufferIndex]->currentSize); 
 
     pthread_mutex_unlock(&newDataAvailableMutex);
 
     if(flagQuit)
       break;
 
-    fprintf(stderr, "[%s][%s] Getting buffer \n",__FILE__,__FUNCTION__);fflush(stderr);    
+    DBG("[%s][%s] Getting buffer, size %d \n",__FILE__,__FUNCTION__,*currentBufferCurrentSize);    
+
+    gettimeofday(&now,NULL);
+    DBG("\nTime delta pre get buffer: %d\n",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec));
 
     // do we have a decode input buffer we can fill and empty?
     buff_header = ilclient_get_input_buffer(decodeComponent,130,1 /* block */);
 
-    fprintf(stderr, "[%s][%s] Copying %d bytes into buffer \n",__FILE__,__FUNCTION__,frameSize);fflush(stderr);        
+    gettimeofday(&now,NULL);
+    DBG("Time delta pre copy: %d\n",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec));
+
+    DBG("[%s][%s] Copying %d bytes into buffer \n",__FILE__,__FUNCTION__,*currentBufferCurrentSize);        
 
     if (buff_header != NULL) 
-      copy_into_buffer_and_empty(frameData,frameSize,flagIsFirst,decodeComponent,buff_header);
+      copy_into_buffer_and_empty(bufferArray->buffers[currentBufferIndex]->data,*currentBufferCurrentSize,flagIsFirst,decodeComponent,buff_header);
     else
-      fprintf(stderr,"[%s][%s][ERROR] No input buffer.\n",__FILE__,__FUNCTION__);fflush(stderr);            
+      ERR("[%s][%s][ERROR] No input buffer.\n",__FILE__,__FUNCTION__);            
 
-    fprintf(stderr, "[%s][%s] Copying done \n",__FILE__,__FUNCTION__);fflush(stderr);        
+    DBG("[%s][%s] Copying done \n",__FILE__,__FUNCTION__); 
 
-    err = ilclient_wait_for_event(decodeComponent,OMX_EventPortSettingsChanged, 131, 0, 0, 1, ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 0);
-
-    if (err >= 0)
-        printf("[%s][ERROR] Another port settings change\n",__FUNCTION__);
-    
     /*
-     * Notify input thread the data is consummed
+     * Now that the copy is done, release input thread
      */
     pthread_mutex_lock(&newDataAvailableMutex);
 
     flagNewDataAvailable = 0;
+
+    *currentBufferCurrentSize  = 0;
+
+    bufferArray->readIndex = (bufferArray->readIndex + 1) % bufferArray->count;
+    bufferArray->currentCount--;
+
     pthread_cond_broadcast(&newDataAvailableCond);
 
-    pthread_mutex_unlock(&newDataAvailableMutex);  
+    pthread_mutex_unlock(&newDataAvailableMutex);
+
+    gettimeofday(&now,NULL);
+
+    DBG("Time delta post copy: %d\n",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec));
+
+    last.tv_sec = now.tv_sec;
+    last.tv_usec = now.tv_usec;
+
+    // memcpy(&last,&now,sizeof(struct timeval));
+
+    err = ilclient_wait_for_event(decodeComponent,OMX_EventPortSettingsChanged, 131, 0, 0, 1, ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 0);
+
+    if (err >= 0)
+      ERR("[%s][ERROR] Another port settings change\n",__FUNCTION__);
+    
+    /*
+     * Notify input thread the data is consummed
+     */
 
     redraw_scene(state);
-    
-
-
+  
     // pthread_mutex_lock(&playbackMutex);
 
     // /* Playback paused by command thread? */
@@ -906,7 +983,7 @@ int main(int argc, char** argv)
     //   glClear( GL_COLOR_BUFFER_BIT );
     //   eglSwapBuffers(state->display, state->surface);              
 
-    //   printf("PAUSE\n");
+    //   DBG("PAUSE\n");
 
     //   pthread_cond_wait(&condPaused,&playbackMutex);
     // }
@@ -914,7 +991,7 @@ int main(int argc, char** argv)
     // /* File changed by command thread? */
     // if(flagSourceChanged)
     // {
-    //   printf("SOURCE CHANGED, loading new file\n");
+    //   DBG("SOURCE CHANGED, loading new file\n");
 
     //   strcpy(currentFile,requestedFile);      
     //   inputSetupSource(currentFile,currentFile,&frame_width,&frame_height); 
@@ -937,7 +1014,7 @@ int main(int argc, char** argv)
     // pthread_mutex_unlock(&playbackMutex);        
   }
 
-        // printf("Timestamp offset was %lld\n",(long long)timestampOffset);
+        // DBG("Timestamp offset was %lld\n",(long long)timestampOffset);
 
         /* Open next file for reading */
 //         pthread_mutex_lock(&playbackMutex);
@@ -950,12 +1027,12 @@ int main(int argc, char** argv)
 //           {          
 //             strcpy(currentFile,requestedFile);
 
-//             printf("Next is %s\n",currentFile);          
+//             DBG("Next is %s\n",currentFile);          
 
 //             /* If file is empty */
 //             if(strcmp(currentFile,"") != 0)
 //             {
-//               printf("Next is %s\n",currentFile);          
+//               DBG("Next is %s\n",currentFile);          
 
 //               timestampOffset = 0;      
 
@@ -966,7 +1043,7 @@ int main(int argc, char** argv)
 //         /* Rewind this file */
 //         else
 //         {
-//           // printf("Loop\n");
+//           // DBG("Loop\n");
 
 
 //           inputRewind();
@@ -975,7 +1052,7 @@ int main(int argc, char** argv)
 
 //           // if(avformat_seek_file(&pFormatCtx,video_stream_idx,0,0,999999,AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY)<0)
 //           // {
-//           //   printf("Cannot seek\n");            
+//           //   DBG("Cannot seek\n");            
 //             avformat_close_input(&pFormatCtx);
 //             inputSetupSource(currentFile,&frame_width,&frame_height);
 //           // }
@@ -988,17 +1065,17 @@ int main(int argc, char** argv)
           // inputSetupSource(currentFile,&frame_width,&frame_height);
 
     
-        // printf("Timestamp offset is now %lld (+= %lld)\n",(long long)timestampOffset,(long long)lastPts);     
+        // DBG("Timestamp offset is now %lld (+= %lld)\n",(long long)timestampOffset,(long long)lastPts);     
 
     //     OMX_SendCommand(ilclient_get_handle(decodeComponent),OMX_CommandFlush,130,NULL);
     //     OMX_SendCommand(ilclient_get_handle(decodeComponent),OMX_CommandFlush,131,NULL);
 
-    //     printf(".\n");fflush(0);
+    //     DBG(".\n");
 
     //     ilclient_wait_for_event(decodeComponent, OMX_EventCmdComplete, OMX_CommandFlush, 0, 130, 0, ILCLIENT_PORT_FLUSH, -1);
     //     ilclient_wait_for_event(decodeComponent, OMX_EventCmdComplete, OMX_CommandFlush, 0, 131, 0, ILCLIENT_PORT_FLUSH, -1);
 
-    //     printf(".\n");fflush(0);
+    //     DBG(".\n");
 
     //     OMX_send_EOS_to_decoder(decodeComponent);        
 
@@ -1006,19 +1083,19 @@ int main(int argc, char** argv)
 
     //     OMX_initClock(clockComponent);        
 
-    //     printf(".\n");fflush(0);
+    //     DBG(".\n");
 
     // /* The following doesn't seem to work if a eos callback is already attached */
     //   ilclient_wait_for_event(renderComponent, OMX_EventBufferFlag, 220, 0, OMX_BUFFERFLAG_EOS, 0,ILCLIENT_BUFFER_FLAG_EOS, 10000);
 
-    //     printf(".\n");fflush(0);
+    //     DBG(".\n");
 
 // }
 
 
 // ilclient_wait_for_event(renderComponent, OMX_EventBufferFlag, 220, 0, OMX_BUFFERFLAG_EOS, 0,ILCLIENT_BUFFER_FLAG_EOS, 100);
   
-  printf("[s][s] Flush the render pipe....\n",__FILE__,__FUNCTION__);fflush(0);
+  DBG("[s][s] Flush the render pipe....\n",__FILE__,__FUNCTION__);
   
   // need to flush the renderer to allow video_decode to disable its input port
 
@@ -1081,10 +1158,10 @@ int main(int argc, char** argv)
     //     OMX_EventBufferFlag, 
     //     90, 0, OMX_BUFFERFLAG_EOS, 0,
     //     ILCLIENT_BUFFER_FLAG_EOS, 10000);
-    // printf("EOS on render\n");        
+    // DBG("EOS on render\n");        
 
   
-   printf("+");fflush(0);
+   DBG("+");
 
    ilclient_disable_port_buffers(decodeComponent, 130, NULL, NULL, NULL);
 
@@ -1092,11 +1169,11 @@ int main(int argc, char** argv)
    ilclient_disable_tunnel(&schedulerTunnel);
    ilclient_disable_tunnel(&clockTunnel);
 
-   printf("+");fflush(0);
+   DBG("+");
 
    ilclient_teardown_tunnels(tunnels);
 
-   printf("+");fflush(0);
+   DBG("+");
 
    COMPONENT_T *list[5];   
    memset(list, 0, sizeof(list));
@@ -1108,34 +1185,34 @@ int main(int argc, char** argv)
 
    ilclient_state_transition(list, OMX_StateIdle);
 
-   printf("+");fflush(0);
+   DBG("+");
 
    ilclient_state_transition(list, OMX_StateLoaded);
 
-   printf("+");fflush(0);   
+   DBG("+");   
 
    ilclient_cleanup_components(list);
 
-   printf("+");fflush(0);   
+   DBG("+");   
 
    OMX_Deinit();
 
-   printf("+");fflush(0);   
+   DBG("+");   
 
    ilclient_destroy(handle);
 
-   printf("+");fflush(0);   
+   DBG("+");   
 
 
 //         OMX_send_EOS_to_decoder(decodeComponent);        
         
 //         pFormatCtx = NULL;
 
-//         printf("1");fflush(0);
+//         DBG("1");
 
 //         inputSetupSource(argv[fileIndex++],&frame_width,&frame_height);
 
-//         printf("2");fflush(0);
+//         DBG("2");
 
 //         OMX_changeStateToIdle(decodeComponent); 
 
@@ -1154,10 +1231,10 @@ int main(int argc, char** argv)
 
         
 
-//   printf("[%s] Decode status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
-//   printf("[%s] Clock status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
-//   printf("[%s] Scheduler status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
-//   printf("[%s] Render status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
+//   DBG("[%s] Decode status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
+//   DBG("[%s] Clock status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
+//   DBG("[%s] Scheduler status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
+//   DBG("[%s] Render status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
 
 //         OMX_setVideoDecoderInputFormat(decodeComponent,fpsscale,fpsrate,frame_width,frame_height);
 
@@ -1179,20 +1256,20 @@ int main(int argc, char** argv)
 
 //     if (OMX_UseEGLImage(ILC_GET_HANDLE(renderComponent), &eglBuffer, 221, NULL, eglImage) != OMX_ErrorNone)
 //   {
-//      printf("[%s] OMX_UseEGLImage failed.\n",__FUNCTION__);
+//      DBG("[%s] OMX_UseEGLImage failed.\n",__FUNCTION__);
 //      exit(1);
 //   }
 
 
 //         OMX_changeStateToExecuting(decodeComponent);
 
-//   printf("[%s] Decode status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
-//   printf("[%s] Clock status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
-//   printf("[%s] Scheduler status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
-//   printf("[%s] Render status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
+//   DBG("[%s] Decode status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(decodeComponent)));
+//   DBG("[%s] Clock status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(clockComponent)));
+//   DBG("[%s] Scheduler status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(schedulerComponent)));
+//   DBG("[%s] Render status: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(renderComponent)));
 
 
-//         printf("3");fflush(0);
+//         DBG("3");
 
 
         // avformat_seek_file(pFormatCtx,0,0,0,10,AVSEEK_FLAG_BACKWARD);

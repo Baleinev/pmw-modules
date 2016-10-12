@@ -1,3 +1,6 @@
+#ifndef OMX_UTILS_H
+#define OMX_UTILS_H
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -40,3 +43,5 @@ int OMX_changeStateToExecuting(COMPONENT_T *component);
 int OMX_changeStateToIdle(COMPONENT_T *component);
 
 int OMX_send_EOS_to_decoder(COMPONENT_T *component);
+
+#endif

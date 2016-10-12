@@ -1,3 +1,6 @@
+#ifndef MONITORTHREAD_H
+#define MONITORTHREAD_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -14,3 +17,5 @@
 #define MAP_FILENAME "mapping.conf.json"
 
 void * monitorThread(void *param);
+
+#endif

@@ -28,6 +28,12 @@ LDLIBS= -lm -lpthread -lvcos -lvchiq_arm -lGLESv2 -lEGL -lopenmaxil -lbcm_host -
 cJSON/cJSON.o: cJSON/cJSON.c
 	$(MAKE) -C cJSON
 
+timeout.o: timeout.c 
+	$(CC) $(CFLAGS) -c timeout.c	
+
+circularBufferCollection.o: circularBufferCollection.c 
+	$(CC) $(CFLAGS) -c circularBufferCollection.c
+
 inputThread.o: inputThread.c
 	$(CC) $(CFLAGS) -c inputThread.c
 
@@ -40,6 +46,9 @@ monitorThread.o: monitorThread.c
 vidplayer.o: vidplayer.c
 	$(CC) $(CFLAGS) -c vidplayer.c
 
+udpReceiver.o: udpReceiver.c
+	$(CC) $(CFLAGS) -c udpReceiver.c
+
 streamplayer.o: streamplayer.c
 	$(CC) $(CFLAGS) -c streamplayer.c
 
@@ -51,7 +60,8 @@ clean:
 	rm -f vidplayer
 	rm -f streamplayer
 
-all: streamplayer.o vidplayer.o OMX_utils.o monitorThread.o commandThread.o inputThread.o cJSON/cJSON.o
-	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitorThread.o commandThread.o inputThread.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
+all: streamplayer.o vidplayer.o OMX_utils.o monitorThread.o commandThread.o inputThread.o cJSON/cJSON.o udpReceiver.o circularBufferCollection.o timeout.o
+	$(CC) $(CFLAGS) -o vidplayer vidplayer.o OMX_utils.o monitorThread.o commandThread.o inputThread.o circularBufferCollection.o timeout.o cJSON/cJSON.o $(LDFLAGS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o streamplayer streamplayer.o $(LDFLAGS) $(LDLIBS)
+	$(CC) $(CFLAGS) -o udpReceiver udpReceiver.o $(LDFLAGS) $(LDLIBS)
 

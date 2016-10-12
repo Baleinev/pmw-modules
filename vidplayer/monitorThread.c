@@ -9,7 +9,7 @@
 #include "cJSON/cJSON.h"
 #include "monitorThread.h"
 
-#define MAPFILE "mapping.conf.json"
+#include "vidplayer.h"
 
 extern unsigned int flagQuit;
 
@@ -22,8 +22,8 @@ extern float o[4][2];
 
 void printValues()
 {
-  fprintf(stderr,"[%s][%s] P: %.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f \n",__FILE__,__FUNCTION__,p[0][0],p[0][1],p[1][0],p[1][1],p[2][0],p[2][1],p[3][0],p[3][1]);fflush(stderr);
-  fprintf(stderr,"[%s][%s] O: %.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f \n",__FILE__,__FUNCTION__,o[0][0],o[0][1],o[1][0],o[1][1],o[2][0],o[2][1],o[3][0],o[3][1]);fflush(stderr);  
+  DBG("[%s][%s] P: %.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f \n",__FILE__,__FUNCTION__,p[0][0],p[0][1],p[1][0],p[1][1],p[2][0],p[2][1],p[3][0],p[3][1]);
+  DBG("[%s][%s] O: %.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f \n",__FILE__,__FUNCTION__,o[0][0],o[0][1],o[1][0],o[1][1],o[2][0],o[2][1],o[3][0],o[3][1]);  
 }
 
 void parseFile()
@@ -44,7 +44,7 @@ void parseFile()
 
   fread(buffer,1, CONF_FILE_LENGTH, f);
 
-  fprintf(stderr,"[%s][%s] File has changed. \n",__FILE__,__FUNCTION__);fflush(stderr);
+  DBG("[%s][%s] File has changed. \n",__FILE__,__FUNCTION__);
 
   fclose(f);
     
@@ -54,7 +54,7 @@ void parseFile()
 
   if (!root)
   {
-    fprintf(stderr,"[%s][%s] Error before: [%s] parsing file %s\n",__FILE__,__FUNCTION__,cJSON_GetErrorPtr(),filename);fflush(stderr);
+    DBG("[%s][%s] Error before: [%s] parsing file %s\n",__FILE__,__FUNCTION__,cJSON_GetErrorPtr(),filename);
   }
   else
   {
@@ -126,13 +126,13 @@ void * monitorThread(void *param)
   fd = inotify_init();
 
   if ( fd < 0 ) {
-    fprintf(stderr,"[%s][%s] inotify_init\n",__FILE__,__FUNCTION__);fflush(stderr);
+    DBG("[%s][%s] inotify_init\n",__FILE__,__FUNCTION__);
     return;
   }
 
   wd = inotify_add_watch( fd, (char *)MAP_DIRNAME, IN_MODIFY | IN_CREATE | IN_DELETE );
 
-  fprintf(stderr,"[%s][%s] Thread started\n",__FILE__,__FUNCTION__);fflush(stderr);
+  DBG("[%s][%s] Thread started\n",__FILE__,__FUNCTION__);
 
   parseFile();
 
@@ -142,7 +142,7 @@ void * monitorThread(void *param)
 
     length = read( fd, buffer, BUF_LEN ); 
 
-    fprintf(stderr,"[%s][%s] read %d\n",__FILE__,__FUNCTION__,length);fflush(stderr);
+    DBG("[%s][%s] read %d\n",__FILE__,__FUNCTION__,length);
 
     if ( length < 0 ) {
       continue;
@@ -152,16 +152,16 @@ void * monitorThread(void *param)
       
       struct inotify_event *event = ( struct inotify_event * ) &buffer[ i ];
 
-      fprintf(stderr,"[%s][%s] Event mask:%d name:%s\n",__FILE__,__FUNCTION__, event->mask, event->name );fflush(stderr);
+      DBG("[%s][%s] Event mask:%d name:%s\n",__FILE__,__FUNCTION__, event->mask, event->name );
 
 
       if ( event->len ) {
         if ( event->mask & IN_CREATE ) {
           if ( event->mask & IN_ISDIR ) {
-            fprintf(stderr,"[%s][%s] The directory %s was created.\n",__FILE__,__FUNCTION__, event->name );fflush(stderr);
+            DBG("[%s][%s] The directory %s was created.\n",__FILE__,__FUNCTION__, event->name );
           }
           else {
-            fprintf(stderr,"[%s][%s] The file %s was created.\n",__FILE__,__FUNCTION__, event->name );fflush(stderr);
+            DBG("[%s][%s] The file %s was created.\n",__FILE__,__FUNCTION__, event->name );
 
             if(strcmp(event->name,MAP_FILENAME) == 0)
               parseFile();
@@ -170,18 +170,18 @@ void * monitorThread(void *param)
         }
         else if ( event->mask & IN_DELETE ) {
           if ( event->mask & IN_ISDIR ) {
-            fprintf(stderr,"[%s][%s] The directory %s was deleted.\n",__FILE__,__FUNCTION__, event->name );fflush(stderr);       
+            DBG("[%s][%s] The directory %s was deleted.\n",__FILE__,__FUNCTION__, event->name );       
           }
           else {
-            fprintf(stderr,"[%s][%s] The file %s was deleted.\n",__FILE__,__FUNCTION__, event->name );fflush(stderr);
+            DBG("[%s][%s] The file %s was deleted.\n",__FILE__,__FUNCTION__, event->name );
           }
         }
         else if ( event->mask & IN_MODIFY ) {
           if ( event->mask & IN_ISDIR ) {
-            fprintf(stderr,"[%s][%s] The directory %s was modified.\n",__FILE__,__FUNCTION__, event->name );fflush(stderr);
+            DBG("[%s][%s] The directory %s was modified.\n",__FILE__,__FUNCTION__, event->name );
           }
           else {
-            fprintf(stderr,"[%s][%s] The file %s was modified.\n",__FILE__,__FUNCTION__, event->name );fflush(stderr);
+            DBG("[%s][%s] The file %s was modified.\n",__FILE__,__FUNCTION__, event->name );
 
             if(strcmp(event->name,MAP_FILENAME) == 0)
             {
