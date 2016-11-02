@@ -6,7 +6,7 @@
 
 #define FRAME_BUFFER_LENGTH (1024*1024*4)
 #define UDP_BUFFER_LENGTH (1024*1024)
-#define UDP_MAX_SIZE 1472
+#define UDP_MAX_SIZE 548
 
 
 void *inputThread(void *param);

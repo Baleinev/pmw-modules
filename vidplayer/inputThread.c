@@ -2,6 +2,8 @@
  * The role of this thread is to make a single raw H264 frame available to other threads, through
  * the inputGetNextFrame function, at the correct rate.
  */
+#define _GNU_SOURCE             /* See feature_test_macros(7) */
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +40,7 @@ CircularBufferCollection *bufferArray;
 // unsigned int currentBuffer = 0;
 
 
-unsigned int udpWait = DEFAULT_UDP_WAIT;
+extern unsigned int udpWait;
 unsigned int frameBufferCount = DEFAULT_FRAME_BUFFER_COUNT;
 
 float roundMean = -1;
@@ -58,7 +60,7 @@ int64_t lastDuration = 0;
 AVFormatContext *AVpFormatCtx = NULL;
 static AVCodecContext *AVvideoDecCtx  = NULL;
 static AVStream *AVvideoStream = NULL;
-AVBitStreamFilterContext *AVbsfc = NULL;
+// AVBitStreamFilterContext *AVbsfc = NULL;
 unsigned int AVframeWidth;
 unsigned int AVframeHeight;
 
@@ -98,39 +100,39 @@ extern unsigned int flagSourceChanged;
 extern unsigned int flagSourceLoaded;
 
 
-static AVPacket *filter(AVBitStreamFilterContext *AVbsfc,AVStream *in, AVPacket *rp)
-{
-  AVPacket *p;
-  AVPacket *fp;
+// static AVPacket *filter(AVBitStreamFilterContext *AVbsfc,AVStream *in, AVPacket *rp)
+// {
+//   AVPacket *p;
+//   AVPacket *fp;
   
-  int rc;
+//   int rc;
 
-  if(AVbsfc)
-  {
-    fp = calloc(sizeof(AVPacket), 1);
+//   if(AVbsfc)
+//   {
+//     fp = calloc(sizeof(AVPacket), 1);
 
-    rc = av_bitstream_filter_filter(AVbsfc,in->codec,NULL, &(fp->data), &(fp->size),rp->data, rp->size,rp->flags);
+//     rc = av_bitstream_filter_filter(AVbsfc,in->codec,NULL, &(fp->data), &(fp->size),rp->data, rp->size,rp->flags);
     
-    if (rc > 0) 
-    {
-      av_free_packet(rp);
-      fp->destruct = av_destruct_packet;
-      p = fp;
-    }
-    else
-    {
-      DBG( "[%s][%s][ERROR] Failed to filter packet\n",__FILE__,__FUNCTION__);
-      p = rp;
-    }
-  }
-  else
-  {
-    ERR("No filter context \n");
-    p = rp;
-  }
+//     if (rc > 0) 
+//     {
+//       av_free_packet(rp);
+//       fp->destruct = av_destruct_packet;
+//       p = fp;
+//     }
+//     else
+//     {
+//       DBG( "[ERROR] Failed to filter packet");
+//       p = rp;
+//     }
+//   }
+//   else
+//   {
+//     ERR("No filter context ");
+//     p = rp;
+//   }
   
-  return p;
-}
+//   return p;
+// }
 
 static int inputFreeUDPsource()
 {
@@ -147,37 +149,47 @@ static int inputSetupUDPsource()
   memset(&sock_in, 0, sinlen);
 
   sourceUDPsocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  // printf("[setup_receiveSocket] Sock Status %d\n", sock);
+  // printf("[setup_receiveSocket] Sock Status %d", sock);
 
   sock_in.sin_family = AF_INET;
   sock_in.sin_port = htons(sourceUDPport);
   sock_in.sin_addr.s_addr =  htonl(INADDR_ANY);
 
   int status = bind(sourceUDPsocket, (struct sockaddr *)&sock_in, sinlen);
-  // printf("[setup_receiveSocket] Bind Status %d, errno: %d\n", status, errno);
+  // printf("[setup_receiveSocket] Bind Status %d, errno: %d", status, errno);
 
   struct timeval tv;
   tv.tv_sec = 0;
   tv.tv_usec = udpWait;
 
-  setsockopt(sourceUDPsocket, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv));
+  if (setsockopt(sourceUDPsocket, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
+    ERR("[ERROR] Failed to set socket to non-blocking");    
+  }  
 
-  int n;
+  int n = 0;
 
-  setsockopt(sourceUDPsocket, SOL_SOCKET, SO_RCVBUF,&n,sizeof(n));
+  // setsockopt(sourceUDPsocket, SOL_SOCKET, SO_RCVBUF,&n,sizeof(n));
+
+  // int UdpBufSize = 0;
+  socklen_t optlen = sizeof(n);
+  // setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &UdpBufSize, optlen);  
   
-  DBG("[%s][%s] Current UDP size %d\n",__FILE__,__FUNCTION__,n);    
+  // DBG(" Current UDP size %d",n);    
+
+  if (setsockopt(sourceUDPsocket, SOL_SOCKET, SO_RCVBUF, &n, optlen) < 0) {
+    ERR("[ERROR] Failed to discard UDP packets. ERRNO:%d",errno);    
+  }  
 
   n = UDP_BUFFER_LENGTH;
 
-  if (setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n)) == -1) {
-    ERR("[%s][%s][ERROR] Failed to expand UDP buffer size\n",__FILE__,__FUNCTION__);    
+  if (setsockopt(sourceUDPsocket, SOL_SOCKET, SO_RCVBUF, &n, optlen) < 0) {
+    ERR("[ERROR] Failed to expand UDP buffer. ERRNO:%d",errno);    
   }  
 
   if(status < 0)
   {
     inputFreeUDPsource();
-    ERR("[%s][%s][ERROR] Failed open UDP listening socket\n",__FILE__,__FUNCTION__);    
+    ERR("[ERROR] Failed open UDP listening socket");    
   }
 
   flagIsFirst = 1;
@@ -209,25 +221,25 @@ static int inputSetupFileSource(unsigned int loop)
   lastDuration = 0;
 
   if(avformat_open_input(&AVpFormatCtx, sourceFILEname, NULL, NULL)!=0) {
-      ERR( "[%s][%s][ERROR] Can't get format\n",__FILE__,__FUNCTION__);
+      ERR( "[ERROR] Can't get format");
       return -1; // Couldn't open file
   }
 
   // Retrieve stream information
   if (avformat_find_stream_info(AVpFormatCtx, NULL) < 0) {
-      ERR( "[%s][%s][ERROR] Couldn't find stream information\n",__FILE__,__FUNCTION__);  
+      ERR( "[ERROR] Couldn't find stream information");  
       inputFreeFileSource();    
       return -2; // Couldn't find stream information
   }
 
-  // printf("Format:\n");
+  // printf("Format:");
   // av_dump_format(AVpFormatCtx, 0, sourceFILEname, 0);
 
   int ret = av_find_best_stream(AVpFormatCtx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
 
   if (ret < 0)
   {
-    ERR( "[%s][ERROR] Couldn't find best stream\n",__FUNCTION__); 
+    ERR( "[%s][ERROR] Couldn't find best stream",__FUNCTION__); 
     inputFreeFileSource();           
     return ret;
   }
@@ -248,7 +260,7 @@ static int inputSetupFileSource(unsigned int loop)
   fpsscale        = AVvideoStream->r_frame_rate.den;
   fpsrate         = AVvideoStream->r_frame_rate.num;
 
-  DBG("[%s][%s] Rate %d scale %d time base %d %d\n",
+  DBG(" Rate %d scale %d time base %d %d",
       __FILE__,
       __FUNCTION__,
       AVvideoStream->r_frame_rate.num,
@@ -260,7 +272,7 @@ static int inputSetupFileSource(unsigned int loop)
 
   if (codec)
   {
-    DBG("[%s][%s] Codec name %s\n",__FILE__,__FUNCTION__,codec->name);
+    DBG(" Codec name %s",codec->name);
   }
   
   flagIsFirst = 1;
@@ -270,7 +282,7 @@ static int inputSetupFileSource(unsigned int loop)
 
 static int inputRewindFileSource()
 {
-  DBG( "[%s][%s] Input needs rewinding\n",__FILE__,__FUNCTION__);                     
+  DBG( " Input needs rewinding");                     
 
   timestampOffset += lastPts*AVtimeBaseNum*1000/AVtimeBaseDen+1000*fpsscale/fpsrate;
   inputFreeFileSource();
@@ -280,19 +292,29 @@ static int inputRewindFileSource()
 
 void *inputThread(void *param)
 {
+  cpu_set_t affinity;
+
+  CPU_ZERO(&affinity);
+  CPU_SET(0,&affinity);
+
+  if(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &affinity) != 0)
+  {
+    ERR("Cannot set affinity. errno:%d",errno);
+  }
+
   struct timeval last,now,lastDecodedFrameTime;
 
   av_register_all();
 
   AVPacket *pkt = calloc(sizeof(AVPacket), 1);
 
-  AVbsfc = av_bitstream_filter_init("h264_mp4toannexb");
+  // AVbsfc = av_bitstream_filter_init("h264_mp4toannexb");
 
   // memset(0,iframeWriteBufferPos,sizeof(iframeWriteBufferPos));
   // memset(0,iframeReadBufferPos,sizeof(iframeReadBufferPos));
   // memset(0,iframeBufferStatus,sizeof(iframeBufferStatus));
 
-  DBG("[%s][%s] Entering loop\n",__FILE__,__FUNCTION__); 
+  LOG("Entering loop"); 
 
   while(!flagQuit)
   {
@@ -303,21 +325,21 @@ void *inputThread(void *param)
      */
     pthread_mutex_lock(&sourceMutex);
 
-      DBG("[%s][%s] Loop marker\n",__FILE__,__FUNCTION__); 
+      DBG(" Loop marker"); 
 
       unsigned int currentBufferIndex = bufferArray->writeIndex;
       unsigned int *currentBufferCurrentSize = &(bufferArray->buffers[currentBufferIndex]->currentSize);  
 
       *currentBufferCurrentSize = 0;    
 
-      DBG("[%s][%s] Loop marker\n",__FILE__,__FUNCTION__); 
+      DBG(" Loop marker"); 
 
       /*
        * If new source available, load new stream
        */
       if(flagSourceChanged)
       {
-        DBG("[%s][%s] Source changed! \n",__FILE__,__FUNCTION__); 
+        DBG(" Source changed! "); 
 
         flagSourceChanged = 0;        
 
@@ -333,11 +355,11 @@ void *inputThread(void *param)
           break;
         }
 
-        DBG("[%s][%s] Input set up \n",__FILE__,__FUNCTION__);         
+        DBG(" Input set up ");         
 
         if(newSourceSuccess < 0)
         {
-          DBG("[%s][%s][ERROR] Can't set new source\n",__FILE__,__FUNCTION__);
+          DBG("[ERROR] Can't set new source");
           flagSourceLoaded = 0;          
         }
         else
@@ -350,11 +372,11 @@ void *inputThread(void *param)
       /*
        * If nothing available, wait for source change, trigged by the control stream.
        */
-      if(!flagSourceLoaded)
+      if(!flagQuit && !flagSourceLoaded)
       {
         while(!flagSourceChanged && !flagQuit)
         {
-          DBG(stdout, "[%s][%s] Here am I, still waiting...\n",__FILE__,__FUNCTION__);          
+          DBG(stdout, " Here am I, still waiting...");          
           pthread_cond_wait(&sourceCond,&sourceMutex);
         }
       }
@@ -364,14 +386,14 @@ void *inputThread(void *param)
     if(flagQuit)
       break;
 
-    DBG("[%s][%s] Reading frame \n",__FILE__,__FUNCTION__);             
+    DBG(" Reading frame ");             
 
     /*
      * At this point, the source must be loaded
      */
     if(!flagSourceLoaded)
     {
-      DBG("[%s][%s][ERROR] Source not loaded\n",__FILE__,__FUNCTION__);
+      DBG("[ERROR] Source not loaded");
       continue;
     }
 
@@ -395,7 +417,7 @@ void *inputThread(void *param)
         }
       }
 
-      DBG("[%s][%s] Read from file %d,%d,%d\n",__FILE__,__FUNCTION__,pkt->size,pkt->stream_index,pkt->pts);                     
+      DBG(" Read from file %d,%d,%d",pkt->size,pkt->stream_index,pkt->pts);                     
 
       unsigned int origStampDTS = pkt->dts;
       unsigned int origStampPTS = pkt->pts;
@@ -409,8 +431,8 @@ void *inputThread(void *param)
         pkt->data[2] == 0x00 && 
         pkt->data[3] == 0x01))
       {
-        pkt = filter(AVbsfc,AVvideoStream, pkt);
-        DBG("[%s][%s] Filtered %d,%d,%d\n",__FILE__,__FUNCTION__,pkt->size,pkt->stream_index,pkt->pts);                               
+        // pkt = filter(AVbsfc,AVvideoStream, pkt);
+        DBG(" Filtered %d,%d,%d",pkt->size,pkt->stream_index,pkt->pts);                               
       }
 
       pkt->pts = origStampPTS;
@@ -421,7 +443,7 @@ void *inputThread(void *param)
 
       unsigned int packetTimestampMs = pkt->pts*AVtimeBaseNum*1000/AVtimeBaseDen+timestampOffset;
 
-      DBG("[%s][%s] Got time %d, duration \n",__FILE__,__FUNCTION__,packetTimestampMs,lastDuration);                                     
+      DBG(" Got time %d, duration ",packetTimestampMs,lastDuration);                                     
 
       struct timeval timestampNow;
       gettimeofday(&timestampNow,NULL);                                 
@@ -429,22 +451,22 @@ void *inputThread(void *param)
       unsigned int timeElapsedSinceBeginningMs = (timestampNow.tv_sec-sourceTimestampBegin.tv_sec)*1000+(timestampNow.tv_usec-sourceTimestampBegin.tv_usec)/1000;                                
 
 
-      DBG("[%s][%s] Time since begin,packet: %d,%d\n",__FILE__,__FUNCTION__,timeElapsedSinceBeginningMs,packetTimestampMs);    
+      DBG(" Time since begin,packet: %d,%d",timeElapsedSinceBeginningMs,packetTimestampMs);    
 
       if(packetTimestampMs > timeElapsedSinceBeginningMs)
       {
-        DBG("[%s][%s] Sleeping %d\n",__FILE__,__FUNCTION__,(packetTimestampMs-timeElapsedSinceBeginningMs)*1000);            
+        DBG(" Sleeping %d",(packetTimestampMs-timeElapsedSinceBeginningMs)*1000);            
         usleep((packetTimestampMs-timeElapsedSinceBeginningMs)*1000);
       }
 
       /* Copy packet data into buffer */
       if(pkt->size > FRAME_BUFFER_LENGTH)
       {
-        DBG("[%s][%s][ERROR] packet size is too big: %d \n",__FILE__,__FUNCTION__,pkt->size);
+        DBG("[ERROR] packet size is too big: %d ",pkt->size);
         continue;  
       }
 
-      DBG("[%s][%s] FILE source copying a frame of %d bytes \n",__FILE__,__FUNCTION__,pkt->size);
+      DBG(" FILE source copying a frame of %d bytes ",pkt->size);
 
       memcpy(bufferArray->buffers[currentBufferIndex]->data,pkt->data,pkt->size);
       *currentBufferCurrentSize = pkt->size;
@@ -466,13 +488,13 @@ void *inputThread(void *param)
        */
       gettimeofday(&now,NULL);
 
-      DBG("\nTime delta pre recv: %d\n",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec));
+      DBG("\nTime delta pre recv: %d",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec));
 
       do
       {
         if(FRAME_BUFFER_LENGTH - *currentBufferCurrentSize < 2000)
         {
-          ERR("[%s][%s][ERROR] Error no space left on buffer\n",__FILE__,__FUNCTION__);
+          ERR("[ERROR] Error no space left on buffer");
           break;
         }
 
@@ -487,14 +509,19 @@ void *inputThread(void *param)
         if(readBytes != -1) // Nothing to read and nothing already read
         {
           nbRounds++;
-          DBG("[%s][%s] Written %d bytes at index %d \n",__FILE__,__FUNCTION__,readBytes,*currentBufferCurrentSize);
+          DBG(" Written %d bytes at index %d ",readBytes,*currentBufferCurrentSize);
           *currentBufferCurrentSize = *currentBufferCurrentSize + readBytes;
         }
-        if(readBytes != UDP_MAX_SIZE)
-          break;
+        // if(readBytes != UDP_MAX_SIZE)
+        // {
+        //   DBG(" Last one %d ",readBytes);          
+        //   break;
+        // }
       }
       // Loop while there is no error or something in the buffer
       while(readBytes > 0 || errno != EAGAIN);
+
+      DBG(" errno %d ",errno == EAGAIN);          
 
       gettimeofday(&now,NULL);
 
@@ -517,7 +544,7 @@ void *inputThread(void *param)
             nbSplit++;
         }
 
-        // LOG("\r[%s][%s] UDP source: Now we have %d bytes in %d rounds \n",__FILE__,__FUNCTION__,*currentBufferCurrentSize,nbRounds);
+        // LOG("\r UDP source: Now we have %d bytes in %d rounds ",*currentBufferCurrentSize,nbRounds);
 
         // LOG("\rUDP log: roundMean: %.2f sizeMean: %.2f nbMerge: %d nbSplit: %d This nbRounds:%d, size:%d bufferCount:%d",
         //   roundMean,
@@ -529,13 +556,13 @@ void *inputThread(void *param)
         //   bufferArray->currentCount+1);
       }
 
-      DBG("Time delta post recv: %d (rounds:%d,bytes:%d)\n",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec),nbRounds,*currentBufferCurrentSize);
+      DBG("Time delta post recv: %d (rounds:%d,bytes:%d)",(now.tv_sec-last.tv_sec)*1000000+(now.tv_usec-last.tv_usec),nbRounds,*currentBufferCurrentSize);
 
       last.tv_sec = now.tv_sec;
       last.tv_usec = now.tv_usec;
     }
 
-    DBG("[%s][%s] %d \n",__FILE__,__FUNCTION__,*currentBufferCurrentSize);    
+    DBG(" %d ",*currentBufferCurrentSize);    
 
     /*
      * If we have read any data in this round...
@@ -552,39 +579,40 @@ void *inputThread(void *param)
        */
       if(isBufferCircularCollectionFull(bufferArray)/* && flagNewDataAvailable == 0*/)
       {
-        DBG("[%s][%s] Data available, signaling \n",__FILE__,__FUNCTION__);
+        DBG(" Data available, signaling ");
       
         flagNewDataAvailable = 1;
         pthread_cond_broadcast(&newDataAvailableCond);
 
-        DBG("[%s][%s] Done \n",__FILE__,__FUNCTION__);
+        DBG(" Done ");
 
         /*
          * ... and wait for it to consume the data, setting the flag flagNewDataAvailable to false
          */
-        while(flagNewDataAvailable != 0)
+        while(!flagQuit && flagNewDataAvailable != 0)
         {
-          DBG("[%s][%s] Here am I, still waiting...\n",__FILE__,__FUNCTION__);
+          DBG(" Here am I, still waiting...");
 
           pthread_cond_wait(&newDataAvailableCond,&newDataAvailableMutex);
 
-          DBG("[%s][%s] Wait loop\n",__FILE__,__FUNCTION__);              
+          DBG(" Wait loop");              
         }
 
         gettimeofday(&lastDecodedFrameTime,NULL);        
 
-        DBG("[%s][%s] Done waiting...\n",__FILE__,__FUNCTION__);      
+        DBG(" Done waiting...");      
 
         flagIsFirst = 0;
 
-        // LOG("direct\n");      
+        // LOG("direct");      
 
         av_free_packet(pkt);
+
+        
       }
       else
       {
-        LOG("storing\n");      
-        DBG("[%s][%s] Data available, not signaling \n",__FILE__,__FUNCTION__);
+        DBG(" Data available, not signaling ");
       }
 
       pthread_mutex_unlock(&newDataAvailableMutex);
@@ -592,45 +620,49 @@ void *inputThread(void *param)
     /*
      * else if the packet is late, and we have a buffer, allow it to be consummed
      */
-    else if((now.tv_sec - lastDecodedFrameTime.tv_sec)*1000000+(now.tv_usec - lastDecodedFrameTime.tv_usec) > 30000)
-    {
-      LOG("late");
+    // else if((now.tv_sec - lastDecodedFrameTime.tv_sec)*1000000+(now.tv_usec - lastDecodedFrameTime.tv_usec) > 30000)
+    // {
+    //   LOG("late");
 
-      pthread_mutex_lock(&newDataAvailableMutex);
+    //   pthread_mutex_lock(&newDataAvailableMutex);
 
-      if(!isBufferCircularCollectionEmpty(bufferArray))
-      {
-        DBG("[%s][%s] Data available, signaling \n",__FILE__,__FUNCTION__);
+    //   if(!isBufferCircularCollectionEmpty(bufferArray))
+    //   {
+    //     DBG(" Data available, signaling ");
       
-        flagNewDataAvailable = 1;
-        pthread_cond_broadcast(&newDataAvailableCond);
+    //     flagNewDataAvailable = 1;
+    //     pthread_cond_broadcast(&newDataAvailableCond);
 
-        DBG("[%s][%s] Done \n",__FILE__,__FUNCTION__);
+    //     DBG(" Done ");
 
-        /*
-         * ... and wait for it to consume the data, setting the flag flagNewDataAvailable to false
-         */
-        while(flagNewDataAvailable != 0)
-        {
-          DBG("[%s][%s] Here am I, still waiting...\n",__FILE__,__FUNCTION__);
+        
+    //      * ... and wait for it to consume the data, setting the flag flagNewDataAvailable to false
+         
+    //     while(flagNewDataAvailable != 0)
+    //     {
+    //       DBG(" Here am I, still waiting...");
 
-          pthread_cond_wait(&newDataAvailableCond,&newDataAvailableMutex);
+    //       pthread_cond_wait(&newDataAvailableCond,&newDataAvailableMutex);
 
-          DBG("[%s][%s] Wait loop\n",__FILE__,__FUNCTION__);              
-        }
+    //       DBG(" Wait loop");              
+    //     }
 
-        gettimeofday(&lastDecodedFrameTime,NULL);        
-      }
+    //     gettimeofday(&lastDecodedFrameTime,NULL);        
+    //   }
       
-      pthread_mutex_unlock(&newDataAvailableMutex);
-    }
-    else
-      LOG("nope\n");      
+    //   pthread_mutex_unlock(&newDataAvailableMutex);
+    // }
+    // else
+    // {
+    //   LOG("nope");      
+    // }
       // 
     /*
      * Else loop again, and try to get some data from file or UDP
      */
   }
+
+  LOG("Exiting loop"); 
 
   /*
    * Exit routine

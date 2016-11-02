@@ -54,6 +54,8 @@ int OMX_configureClockComponentForPlayback(COMPONENT_T *clockComponent)
     ERR( "[OMX_configureClockComponentForPlayback] COMXCoreComponent::SetConfig - %s failed with omx_err(0x%x)\n","clock", err);
     return -2;
   }
+
+  return 0;
 }
 
 int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,unsigned int fpsrate,unsigned int img_width,unsigned int img_height)
@@ -61,7 +63,8 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
     int err;
 
     // set input video format
-    DBG("[OMX_setVideoDecoderInputFormat] Setting video decoder format\n");
+    LOG("[OMX_setVideoDecoderInputFormat] Setting video decoder format");
+
     OMX_VIDEO_PARAM_PORTFORMATTYPE videoPortFormat;
 
     memset(&videoPortFormat, 0, sizeof(OMX_VIDEO_PARAM_PORTFORMATTYPE));
@@ -69,10 +72,10 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
     videoPortFormat.nVersion.nVersion = OMX_VERSION;
     videoPortFormat.nPortIndex = 130;
 
-    err = OMX_GetParameter(ilclient_get_handle(component),
-        OMX_IndexParamVideoPortFormat, &videoPortFormat);
+    err = OMX_GetParameter(ilclient_get_handle(component),OMX_IndexParamVideoPortFormat, &videoPortFormat);
+
     if (err != OMX_ErrorNone) {
-        ERR( "Error getting video decoder format %s\n", OMX_err2str(err));
+        ERR("Error getting video decoder format %s", OMX_err2str(err));
         return -1;
     }
 
@@ -88,17 +91,19 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
       else
           videoPortFormat.xFramerate = 25 * (1<<16);
 
-      DBG("[OMX_setVideoDecoderInputFormat] FPS num %d den %d\n", fpsrate, fpsscale);
-      DBG("[OMX_setVideoDecoderInputFormat] Set frame rate to %d\n", videoPortFormat.xFramerate);
+      LOG("[OMX_setVideoDecoderInputFormat] FPS num %d den %d", fpsrate, fpsscale);
+      LOG("[OMX_setVideoDecoderInputFormat] Set frame rate to %d", videoPortFormat.xFramerate);
     }
+    else
+      videoPortFormat.xFramerate = 60;
 
     err = OMX_SetParameter(ilclient_get_handle(component),OMX_IndexParamVideoPortFormat, &videoPortFormat);
 
     if (err != OMX_ErrorNone) {
-        ERR( "[OMX_setVideoDecoderInputFormat] Error setting video decoder format %s\n", OMX_err2str(err));
+        ERR( "[OMX_setVideoDecoderInputFormat] Error setting video decoder format %s", OMX_err2str(err));
         return -2;
     } else
-        DBG("Video decoder format set up ok\n");
+        LOG("Video decoder format set up ok");
     
 
     OMX_PARAM_PORTDEFINITIONTYPE portParam;
@@ -113,7 +118,7 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
 
     if(err != OMX_ErrorNone)
     {
-        ERR( "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
+        ERR( "[OMX_setVideoDecoderInputFormat] OMX_IndexParamPortDefinition: %s", OMX_err2str(err));
         return -3;
     }
 
@@ -128,14 +133,12 @@ int OMX_setVideoDecoderInputFormat(COMPONENT_T *component,unsigned int fpsscale,
 
       if(err != OMX_ErrorNone)
       {
-          ERR( "COMXVideo::Open error OMX_IndexParamPortDefinition omx_err(0x%08x)\n", err);
+          ERR( "[OMX_setVideoDecoderInputFormat] OMX_IndexParamPortDefinition %s", OMX_err2str(err));
           return -4;
       }
-
     }
     return 0;
 }
-
 
 int OMX_createComponent(ILCLIENT_T  *handle, char *componentName, COMPONENT_T **component,ILCLIENT_CREATE_FLAGS_T flags)
 {
@@ -146,7 +149,7 @@ int OMX_createComponent(ILCLIENT_T  *handle, char *componentName, COMPONENT_T **
   err = ilclient_create_component(handle,component,componentName,flags);
 
   if (err == -1) {
-      ERR(stderr, "[OMX_createComponent] %s create failed\n",componentName);
+      ERR("[OMX_createComponent] %s create failed\n",componentName);
       return 1;
   }
   DBG("[%s] New state: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(*component)));
@@ -160,6 +163,8 @@ int OMX_createComponent(ILCLIENT_T  *handle, char *componentName, COMPONENT_T **
       return 1;
   }
   DBG("[%s] New state: %s\n",__FUNCTION__,OMX_getStateString(ilclient_get_handle(*component)));
+
+  return 0;
 }
 
 int OMX_sendDecoderConfig(COMPONENT_T *component,char *extradata,int extradatasize)
@@ -203,70 +208,123 @@ int OMX_sendDecoderConfig(COMPONENT_T *component,char *extradata,int extradatasi
     return 0;
 }
 
+
+static const char states[][128] = {
+  "StateLoaded",
+  "StateIdle",
+  "StateExecuting",
+  "StatePause",
+  "StateWait",
+  "StateInvalid",
+  "State unknown"};
+
 char * OMX_getStateString(OMX_HANDLETYPE handle)
 {
-    OMX_STATETYPE state;
-    OMX_ERRORTYPE err;
 
-    err = OMX_GetState(handle, &state);
-    if (err != OMX_ErrorNone) {
-        ERR( "Error on getting state\n");
-        exit(1);
-    }
-    switch (state) {
-        case OMX_StateLoaded:           return "StateLoaded";
-        case OMX_StateIdle:             return "StateIdle";
-        case OMX_StateExecuting:        return "StateExecuting";
-        case OMX_StatePause:            return "StatePause";
-        case OMX_StateWaitForResources: return "StateWait";
-        case OMX_StateInvalid:          return "StateInvalid";
-        default:                        return "State unknown";
-    }
+  OMX_STATETYPE state;
+  OMX_ERRORTYPE err;
+
+  err = OMX_GetState(handle, &state);
+  
+  if (err != OMX_ErrorNone) {
+      ERR( "Error on getting state\n");
+      exit(1);
+  }
+
+  switch (state) {
+      case OMX_StateLoaded:           return states[0];
+      case OMX_StateIdle:             return states[1];
+      case OMX_StateExecuting:        return states[2];
+      case OMX_StatePause:            return states[3];
+      case OMX_StateWaitForResources: return states[4];
+      case OMX_StateInvalid:          return states[5];
+      default:                        return states[6];
+  }
 }
+
+static const char errors[][128] = {
+  "OMX_ErrorInsufficientResources",
+  "OMX_ErrorUndefined",
+  "OMX_ErrorInvalidComponentName",
+  "OMX_ErrorComponentNotFound",
+  "OMX_ErrorInvalidComponent",
+  "OMX_ErrorBadParameter",
+  "OMX_ErrorNotImplemented",
+  "OMX_ErrorUnderflow",
+  "OMX_ErrorOverflow",
+  "OMX_ErrorHardware",
+  "OMX_ErrorInvalidState",
+  "OMX_ErrorStreamCorrupt",
+  "OMX_ErrorPortsNotCompatible",
+  "OMX_ErrorResourcesLost",
+  "OMX_ErrorNoMore",
+  "OMX_ErrorVersionMismatch",
+  "OMX_ErrorNotReady",
+  "OMX_ErrorTimeout",
+  "OMX_ErrorSameState",
+  "OMX_ErrorResourcesPreempted",
+  "OMX_ErrorPortUnresponsiveDuringAllocation",
+  "OMX_ErrorPortUnresponsiveDuringDeallocation",
+  "OMX_ErrorPortUnresponsiveDuringStop",
+  "OMX_ErrorIncorrectStateTransition",
+  "OMX_ErrorIncorrectStateOperation",
+  "OMX_ErrorUnsupportedSetting",
+  "OMX_ErrorUnsupportedIndex",
+  "OMX_ErrorBadPortIndex",
+  "OMX_ErrorPortUnpopulated",
+  "OMX_ErrorComponentSuspended",
+  "OMX_ErrorDynamicResourcesUnavailable",
+  "OMX_ErrorMbErrorsInFrame",
+  "OMX_ErrorFormatNotDetected",
+  "OMX_ErrorContentPipeOpenFailed",
+  "OMX_ErrorContentPipeCreationFailed",
+  "OMX_ErrorSeperateTablesUsed",
+  "OMX_ErrorTunnelingUnsupported",
+  "Unknow error"};
 
 char * OMX_err2str(int err)
 {
 
-    switch (err) {
-        case OMX_ErrorInsufficientResources: return "OMX_ErrorInsufficientResources";
-        case OMX_ErrorUndefined: return "OMX_ErrorUndefined";
-        case OMX_ErrorInvalidComponentName: return "OMX_ErrorInvalidComponentName";
-        case OMX_ErrorComponentNotFound: return "OMX_ErrorComponentNotFound";
-        case OMX_ErrorInvalidComponent: return "OMX_ErrorInvalidComponent";
-        case OMX_ErrorBadParameter: return "OMX_ErrorBadParameter";
-        case OMX_ErrorNotImplemented: return "OMX_ErrorNotImplemented";
-        case OMX_ErrorUnderflow: return "OMX_ErrorUnderflow";
-        case OMX_ErrorOverflow: return "OMX_ErrorOverflow";
-        case OMX_ErrorHardware: return "OMX_ErrorHardware";
-        case OMX_ErrorInvalidState: return "OMX_ErrorInvalidState";
-        case OMX_ErrorStreamCorrupt: return "OMX_ErrorStreamCorrupt";
-        case OMX_ErrorPortsNotCompatible: return "OMX_ErrorPortsNotCompatible";
-        case OMX_ErrorResourcesLost: return "OMX_ErrorResourcesLost";
-        case OMX_ErrorNoMore: return "OMX_ErrorNoMore";
-        case OMX_ErrorVersionMismatch: return "OMX_ErrorVersionMismatch";
-        case OMX_ErrorNotReady: return "OMX_ErrorNotReady";
-        case OMX_ErrorTimeout: return "OMX_ErrorTimeout";
-        case OMX_ErrorSameState: return "OMX_ErrorSameState";
-        case OMX_ErrorResourcesPreempted: return "OMX_ErrorResourcesPreempted";
-        case OMX_ErrorPortUnresponsiveDuringAllocation: return "OMX_ErrorPortUnresponsiveDuringAllocation";
-        case OMX_ErrorPortUnresponsiveDuringDeallocation: return "OMX_ErrorPortUnresponsiveDuringDeallocation";
-        case OMX_ErrorPortUnresponsiveDuringStop: return "OMX_ErrorPortUnresponsiveDuringStop";
-        case OMX_ErrorIncorrectStateTransition: return "OMX_ErrorIncorrectStateTransition";
-        case OMX_ErrorIncorrectStateOperation: return "OMX_ErrorIncorrectStateOperation";
-        case OMX_ErrorUnsupportedSetting: return "OMX_ErrorUnsupportedSetting";
-        case OMX_ErrorUnsupportedIndex: return "OMX_ErrorUnsupportedIndex";
-        case OMX_ErrorBadPortIndex: return "OMX_ErrorBadPortIndex";
-        case OMX_ErrorPortUnpopulated: return "OMX_ErrorPortUnpopulated";
-        case OMX_ErrorComponentSuspended: return "OMX_ErrorComponentSuspended";
-        case OMX_ErrorDynamicResourcesUnavailable: return "OMX_ErrorDynamicResourcesUnavailable";
-        case OMX_ErrorMbErrorsInFrame: return "OMX_ErrorMbErrorsInFrame";
-        case OMX_ErrorFormatNotDetected: return "OMX_ErrorFormatNotDetected";
-        case OMX_ErrorContentPipeOpenFailed: return "OMX_ErrorContentPipeOpenFailed";
-        case OMX_ErrorContentPipeCreationFailed: return "OMX_ErrorContentPipeCreationFailed";
-        case OMX_ErrorSeperateTablesUsed: return "OMX_ErrorSeperateTablesUsed";
-        case OMX_ErrorTunnelingUnsupported: return "OMX_ErrorTunnelingUnsupported";
-        default: return "unknown error";
-    }
+  switch (err) {
+      case OMX_ErrorInsufficientResources: return errors[0];
+      case OMX_ErrorUndefined: return errors[1];
+      case OMX_ErrorInvalidComponentName: return errors[2];
+      case OMX_ErrorComponentNotFound: return errors[3];
+      case OMX_ErrorInvalidComponent: return errors[4];
+      case OMX_ErrorBadParameter: return errors[5];
+      case OMX_ErrorNotImplemented: return errors[6];
+      case OMX_ErrorUnderflow: return errors[7];
+      case OMX_ErrorOverflow: return errors[8];
+      case OMX_ErrorHardware: return errors[9];
+      case OMX_ErrorInvalidState: return errors[10];
+      case OMX_ErrorStreamCorrupt: return errors[11];
+      case OMX_ErrorPortsNotCompatible: return errors[12];
+      case OMX_ErrorResourcesLost: return errors[13];
+      case OMX_ErrorNoMore: return errors[14];
+      case OMX_ErrorVersionMismatch: return errors[15];
+      case OMX_ErrorNotReady: return errors[16];
+      case OMX_ErrorTimeout: return errors[17];
+      case OMX_ErrorSameState: return errors[18];
+      case OMX_ErrorResourcesPreempted: return errors[19];
+      case OMX_ErrorPortUnresponsiveDuringAllocation: return errors[20];
+      case OMX_ErrorPortUnresponsiveDuringDeallocation: return errors[21];
+      case OMX_ErrorPortUnresponsiveDuringStop: return errors[22];
+      case OMX_ErrorIncorrectStateTransition: return errors[23];
+      case OMX_ErrorIncorrectStateOperation: return errors[24];
+      case OMX_ErrorUnsupportedSetting: return errors[25];
+      case OMX_ErrorUnsupportedIndex: return errors[26];
+      case OMX_ErrorBadPortIndex: return errors[27];
+      case OMX_ErrorPortUnpopulated: return errors[28];
+      case OMX_ErrorComponentSuspended: return errors[29];
+      case OMX_ErrorDynamicResourcesUnavailable: return errors[30];
+      case OMX_ErrorMbErrorsInFrame:return errors[31];
+      case OMX_ErrorFormatNotDetected: return errors[32];
+      case OMX_ErrorContentPipeOpenFailed: return errors[33];
+      case OMX_ErrorContentPipeCreationFailed:return errors[34];
+      case OMX_ErrorSeperateTablesUsed:return errors[35];
+      case OMX_ErrorTunnelingUnsupported: return errors[36];
+      default:return errors[37];
+  }
 }
 
 void OMX_printClockState(COMPONENT_T *clockComponent)
@@ -370,11 +428,15 @@ int OMX_stopClock(COMPONENT_T *clockComponent)
 int OMX_changeStateToExecuting(COMPONENT_T *component)
 {
   ilclient_change_component_state(component,OMX_StateExecuting);
+
+  return 0;
 }
 
 int OMX_changeStateToIdle(COMPONENT_T *component)
 {
   ilclient_change_component_state(component,OMX_StateIdle);
+
+  return 0;
 }
 
 int OMX_send_EOS_to_decoder(COMPONENT_T *component)
@@ -394,4 +456,6 @@ int OMX_send_EOS_to_decoder(COMPONENT_T *component)
   omx_buffer->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN | OMX_BUFFERFLAG_EOS;
   
   OMX_EmptyThisBuffer(ILC_GET_HANDLE(component), omx_buffer);
+
+  return 0;
 }

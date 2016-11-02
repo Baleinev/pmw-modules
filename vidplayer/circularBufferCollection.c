@@ -62,14 +62,14 @@ void circularBufferCollectionDestroy(CircularBufferCollection *bufferArray)
   free(bufferArray);
 }
 
-inline unsigned int isBufferCircularCollectionFull(CircularBufferCollection *bufferArray)
+unsigned int isBufferCircularCollectionFull(CircularBufferCollection *bufferArray)
 {
   DBG("[%s][%s] %d/%d\n",__FILE__,__FUNCTION__,bufferArray->currentCount,bufferArray->count);                               
 
   return bufferArray->currentCount == bufferArray->count;
 }
 
-inline unsigned int isBufferCircularCollectionEmpty(CircularBufferCollection *bufferArray)
+unsigned int isBufferCircularCollectionEmpty(CircularBufferCollection *bufferArray)
 {
   return bufferArray->currentCount == 0;
 }

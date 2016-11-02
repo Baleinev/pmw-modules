@@ -22,7 +22,7 @@ typedef struct CircularBufferCollection
 CircularBufferCollection *circularBufferCollectionInit(unsigned int size,unsigned int count);
 void circularBufferCollectionDestroy(CircularBufferCollection*);
 
-inline unsigned int isBufferCircularCollectionFull(CircularBufferCollection*);
-inline unsigned int isBufferCircularCollectionEmpty(CircularBufferCollection*);
+unsigned int isBufferCircularCollectionFull(CircularBufferCollection*);
+unsigned int isBufferCircularCollectionEmpty(CircularBufferCollection*);
 
 #endif

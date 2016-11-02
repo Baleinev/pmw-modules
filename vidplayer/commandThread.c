@@ -18,7 +18,6 @@
 #include "vidplayer.h"
 
 int sourceUDPsocket;
-int sourceUDPport;
 char sourceFILEname[FILENAME_SIZE];
 sourceType_t sourceType;
 
